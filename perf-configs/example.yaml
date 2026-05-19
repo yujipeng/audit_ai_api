@@ -1,0 +1,45 @@
+# Example perf-bench config.
+#
+# Run with:
+#   python scripts/perf-bench.py --config perf-configs/example.yaml \
+#       --output reports/example.html
+
+test:
+  prompt: "请介绍北京好吃的"
+  rounds: 10              # rounds per (endpoint, model) combination
+  concurrency: 1          # set >1 for parallel rounds (batch test)
+  timeout: 60             # seconds per request
+  max_tokens: 512
+  # temperature: 0.7      # OPTIONAL. Omit to maximise model compatibility —
+                          # newer models like claude-opus-4-7 reject any value.
+  format: openai          # or "anthropic"
+  system: null            # optional system prompt
+
+  # Optional: list of prompts to round-robin across rounds.
+  # Overrides `prompt:` if present.
+  # prompts:
+  #   - "请介绍北京好吃的"
+  #   - "讲一个简短的笑话"
+  #   - "用 Python 写一个二分查找"
+
+# Models tested when an endpoint does NOT specify its own list.
+# Curated to "newer / high-version" flagships from major vendors.
+default_models:
+  - gpt-4o
+  - gpt-4o-mini
+  - claude-3-5-sonnet-20241022
+  - deepseek-chat
+  - gemini-2.0-flash
+
+endpoints:
+  - name: relay-a
+    base_url: https://relay-a.example.com
+    api_key: sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    # Optional per-endpoint override:
+    # models:
+    #   - gpt-4o
+    #   - claude-3-5-sonnet-20241022
+
+  - name: relay-b
+    base_url: https://relay-b.example.com
+    api_key: sk-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

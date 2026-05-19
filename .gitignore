@@ -7,9 +7,14 @@ build/
 .venv/
 venv/
 
-# Reports (may contain sensitive data)
-reports/
+# Reports (may contain sensitive test data)
+reports/*
+!reports/readme.html
 *.report.md
+
+# Local-only YAML configs that you'd never want pushed (real keys)
+perf-configs/local-*.yaml
+perf-configs/private-*.yaml
 
 # IDE
 .vscode/

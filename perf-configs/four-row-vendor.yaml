@@ -1,0 +1,43 @@
+# 4-row vendor-scoped comparison template.
+#
+# Each row is one (url, key, vendor) tuple. A vendor preset auto-expands to
+# representative newer-flagship models for that vendor:
+#   gpt    -> gpt-5.2, gpt-5.3-codex, gpt-5.5
+#   claude -> claude-haiku-4-5, claude-sonnet-4-6, claude-opus-4-7
+#
+# Replace the placeholder API keys with your own.
+#
+# Run with:
+#   python scripts/perf-bench.py --config perf-configs/four-row-vendor.yaml \
+#       --output reports/four-row.html
+
+test:
+  prompt: "请介绍北京好吃的"
+  rounds: 3
+  concurrency: 1
+  timeout: 30
+  max_tokens: 512
+  # temperature deliberately omitted — newer models such as claude-opus-4-7
+  # reject any temperature value with HTTP 400.
+  format: openai
+
+endpoints:
+  - name: taoken-gpt
+    base_url: https://taoken.ai
+    api_key: sk-REPLACE_ME_TAOKEN_KEY
+    vendor: gpt
+
+  - name: allall-gpt
+    base_url: https://api.allall.ai
+    api_key: sk-REPLACE_ME_ALLALL_KEY1
+    vendor: gpt
+
+  - name: taoken-claude
+    base_url: https://taoken.ai
+    api_key: sk-REPLACE_ME_TAOKEN_KEY
+    vendor: claude
+
+  - name: allall-claude-key2
+    base_url: https://api.allall.ai
+    api_key: sk-REPLACE_ME_ALLALL_KEY2
+    vendor: claude

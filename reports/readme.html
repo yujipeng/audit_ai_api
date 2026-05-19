@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>perf-bench 使用文档（单路 / 多路 / 验纯 + 性能联跑）</title>
+<style>
+  :root {
+    --bg: #0c0d10; --panel: #15171c; --border: #2a2e36;
+    --fg: #e8e8e8; --muted: #9aa1ad; --accent: #4dd2ff;
+    --green: #4cd28a; --yellow: #f3c969; --red: #ff6b6b;
+    --code-bg: #0a0a0c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 32px 80px; max-width: 980px;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI",
+                  "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 32px 0 10px; color: var(--accent);
+       border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  h4 { font-size: 14px; margin: 18px 0 6px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .06em; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0 8px 22px; padding: 0; }
+  li { margin: 4px 0; }
+  code {
+    background: var(--code-bg); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f0e6c8;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 14px; overflow-x: auto;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #d8e3f0;
+  }
+  pre code { background: transparent; border: none; padding: 0; color: inherit; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 18px; margin: 14px 0;
+  }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: .04em; margin-right: 4px;
+  }
+  .pill.clean      { background: rgba(76,210,138,.18); color: var(--green); }
+  .pill.suspicious { background: rgba(243,201,105,.18); color: var(--yellow); }
+  .pill.injected   { background: rgba(255,107,107,.20); color: var(--red); }
+  .pill.failed     { background: rgba(90,96,110,.30); color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--border);
+           text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .hl { color: var(--accent); }
+  .warn { color: var(--yellow); }
+  .bad { color: var(--red); }
+  .ok { color: var(--green); }
+  .small { color: var(--muted); font-size: 12px; }
+  .toc {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; margin: 14px 0 22px;
+  }
+  .toc ol { margin: 0 0 0 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  blockquote {
+    margin: 10px 0; padding: 8px 14px;
+    border-left: 3px solid var(--accent);
+    background: rgba(77,210,255,.06); color: var(--fg);
+  }
+</style>
+</head>
+<body>
+<h1>perf-bench: AI API Relay 性能 + 验纯一体化测试工具</h1>
+<div class="meta">
+  基于 <code>api-relay-audit</code> 二次开发的 perf 扩展。
+  支持<b>单路 / 多路</b>性能压测、TTFT / 平均耗时 / p95 / p99 统计、prompt 注入与身份漂移验纯，输出单文件 HTML 对比报告。
+</div>
+
+<div class="toc">
+  <b>目录</b>
+  <ol>
+    <li><a href="#concept">设计思路：性能 + 验纯为什么要一起跑</a></li>
+    <li><a href="#install">安装与依赖</a></li>
+    <li><a href="#single">方案 A — 单路测试（最简形式）</a></li>
+    <li><a href="#multi">方案 B — 多路对比测试（YAML）</a></li>
+    <li><a href="#vendors">vendor 预设：<code>gpt</code> / <code>claude</code></a></li>
+    <li><a href="#purity">验纯（纯度检测）做了什么</a></li>
+    <li><a href="#metrics">性能指标定义（TTFT / p95 / p99 / 等）</a></li>
+    <li><a href="#errors">异常捕获：超时 / 4xx / 5xx 都进报告</a></li>
+    <li><a href="#extend">扩展能力（自定义 prompt、批量、轮数、模型）</a></li>
+    <li><a href="#output">输出文件：JSON + HTML</a></li>
+    <li><a href="#cli">CLI 完整参数</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="concept">1. 设计思路：性能 + 验纯为什么要一起跑</h2>
+
+<p>
+做 relay 中转评估时通常有两个独立关心点：
+</p>
+<ol>
+  <li><b>性能</b> — 首包延迟（TTFT）、总耗时、p95/p99 抖动；</li>
+  <li><b>纯度</b> — 模型回的是不是被 relay 偷偷换成了别的模型、有没有 prompt 注入、有没有 system prompt 泄漏。</li>
+</ol>
+
+<blockquote>
+  perf-bench 的核心选择是：<b>用同一批响应同时计算两类指标</b>。<br>
+  每跑一个 round 都流式拿到完整回答，性能模块从流时间戳里算 TTFT，验纯模块直接读这同一段文本检查身份漂移与注入标记。<br>
+  这样跑 10 次就同时拿到 10 个延迟样本 + 10 份纯度证据，不需要为验纯额外发请求，对 quota 友好。
+</blockquote>
+
+<p>对应在代码里就是一条调用链：</p>
+<pre><code>StreamingClient.stream()
+  → StreamResult { ttft, total_time, text, error, ... }
+        ├── perf.metrics.summarize_latencies()  → avg / p50 / p95 / p99
+        └── perf.purity.analyze_response()       → identities / refusal / language_mismatch / system_prompt_leak / ...
+</code></pre>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="install">2. 安装与依赖</h2>
+<pre><code>git clone https://github.com/toby-bridges/api-relay-audit.git
+cd api-relay-audit
+pip install -r requirements.txt   # httpx + PyYAML</code></pre>
+
+<p>Python ≥ 3.9，仓库本身零配置。所有 perf 代码都在 <code>api_relay_audit/perf/</code>。</p>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="single">3. 方案 A — 单路测试（最简形式）</h2>
+
+<p>当一把 key 只测一个 relay、一个厂商时，用 <b>位置参数</b> 三段式：</p>
+
+<pre><code>python scripts/perf-bench.py &lt;url&gt; &lt;key&gt; &lt;vendor&gt; \
+    [--rounds 10] [--prompt "..."] [--output report.html]</code></pre>
+
+<h4>实例</h4>
+<pre><code># 测 taoken 的 GPT 通路（默认 prompt = 请介绍北京好吃的，rounds=10）
+python scripts/perf-bench.py https://taoken.ai sk-7b1fc763... gpt \
+    --output reports/taoken-gpt.html
+
+# 测 taoken 的 Claude 通路，3 轮
+python scripts/perf-bench.py https://taoken.ai sk-7b1fc763... claude \
+    --rounds 3 --output reports/taoken-claude.html
+
+# 等价的 flag 形式
+python scripts/perf-bench.py --url https://taoken.ai --key sk-7b1fc763... \
+    --vendor claude --rounds 3 --output reports/taoken-claude.html</code></pre>
+
+<p>跑完会输出：</p>
+<ul>
+  <li><code>reports/&lt;name&gt;.html</code> — 单文件可分享的对比报告</li>
+  <li><code>reports/&lt;name&gt;.json</code> — 同名 JSON，含每轮明细，方便二次分析</li>
+</ul>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="multi">4. 方案 B — 多路对比测试（YAML）</h2>
+
+<p>需要一次跑多 endpoint 出一份对比报告时用 YAML：</p>
+
+<h4>YAML 模板</h4>
+<pre><code>test:
+  prompt: "请介绍北京好吃的"   # 默认 prompt
+  rounds: 10                  # 每个 (endpoint, model) 跑几轮
+  concurrency: 1              # >1 时并发批量
+  timeout: 30                 # 单请求超时秒数
+  max_tokens: 512
+  format: openai              # 或 anthropic
+  # temperature: 0.7          # 留空 = 不传 temperature 字段（推荐）
+
+# 可选：跨 endpoint 共享的默认模型
+default_models:
+  - gpt-5.5
+  - claude-opus-4-7
+
+endpoints:
+  - name: relay-a
+    base_url: https://relay-a.example.com
+    api_key: sk-aaaaaaaa
+    vendor: gpt               # 用 vendor 预设，自动展开成 gpt-5.2/5.3-codex/5.5
+
+  - name: relay-b
+    base_url: https://relay-b.example.com
+    api_key: sk-bbbbbbbb
+    vendor: claude            # claude-haiku-4-5 / sonnet-4-6 / opus-4-7
+
+  - name: relay-a-claude
+    base_url: https://relay-a.example.com
+    api_key: sk-aaaaaaaa      # 同 relay-a 但走 claude 通路
+    vendor: claude
+
+  - name: relay-c-mixed
+    base_url: https://relay-c.example.com
+    api_key: sk-cccccccc
+    models: [gpt-5.5, claude-sonnet-4-6]   # 显式 models 覆盖 vendor</code></pre>
+
+<h4>启动</h4>
+<pre><code>python scripts/perf-bench.py --config perf-configs/your.yaml \
+    --output reports/comparison.html</code></pre>
+
+<p>报告里 <b>Side-by-side comparison</b> 一节会把所有 endpoint × model 组合排成一个表，每行带 OK/Total、TTFT avg/p95/p99、Total avg/p95/p99、Purity 标签。</p>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="vendors">5. vendor 预设：<code>gpt</code> / <code>claude</code></h2>
+
+<p>不同 key 往往只能调用一个厂商。<code>vendor</code> 字段（YAML 或 CLI 第三个位置参数）会自动展开成该厂商的"较新版本代表模型"集合：</p>
+
+<table>
+  <thead><tr><th>vendor</th><th>展开模型</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>gpt</code></td>
+      <td><code>gpt-5.2</code>, <code>gpt-5.3-codex</code>, <code>gpt-5.5</code></td>
+      <td>OpenAI 较新 GPT-5 家族</td>
+    </tr>
+    <tr>
+      <td><code>claude</code></td>
+      <td><code>claude-haiku-4-5</code>, <code>claude-sonnet-4-6</code>, <code>claude-opus-4-7</code></td>
+      <td>Anthropic Claude 4 全档（轻量 / 主流 / 旗舰）</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="small">想跑别的模型时，YAML 用 <code>models:</code> 显式覆盖，CLI 用 <code>--model</code>（可重复）。两个都设的话，<code>models/--model</code> 优先级更高。</p>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="purity">6. 验纯（纯度检测）做了什么</h2>
+
+<p>每条响应都会过下面这套 6 类启发式检测，结果汇成一个 verdict：</p>
+
+<table>
+  <thead><tr><th>检测项</th><th>触发条件</th><th>报告中的 issue 名</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>身份漂移</td>
+      <td>响应里出现 "I am GPT-5" / "我是通义千问" 之类的<b>带身份锚点</b>的非 Claude/非目标模型自报家门（关键字表 + 锚点正则，避免误杀）</td>
+      <td><code>identity_leak</code></td>
+    </tr>
+    <tr>
+      <td>System prompt 泄漏</td>
+      <td>响应包含 <code>You are a helpful assistant</code>、<code>system:</code>、<code>&lt;|im_start|&gt;</code>、<code>[INST]</code>、<code>忽略之前的指令</code> 等模板/越狱标记</td>
+      <td><code>system_prompt_leak</code></td>
+    </tr>
+    <tr>
+      <td>Relay 内部 token 漏出</td>
+      <td>响应里直接出现 <code>OPENAI_API_KEY</code>、<code>Bearer sk-</code>、<code>===SYSTEM===</code> 等内部敏感字符串</td>
+      <td><code>relay_internal_token</code></td>
+    </tr>
+    <tr>
+      <td>语言不匹配</td>
+      <td>prompt ≥50% 中文，但响应正文 &lt;20% 中文（Claude / GPT 在 relay 异常路由后偶尔会切英文）</td>
+      <td><code>language_mismatch</code></td>
+    </tr>
+    <tr>
+      <td>拒答</td>
+      <td>对良性 prompt 出现 <code>I cannot</code> / <code>抱歉无法</code> 等</td>
+      <td><code>refusal</code></td>
+    </tr>
+    <tr>
+      <td>空响应</td>
+      <td>OK 状态码但正文空（relay 把流截了或上游被 cut off）</td>
+      <td><code>empty_response</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>聚合后的 verdict 四档</h4>
+<p>
+<span class="pill clean">CLEAN</span>     所有 round 都正常对题、无标记<br>
+<span class="pill suspicious">SUSPICIOUS</span>  有空响应/拒答/语言切换且占多数<br>
+<span class="pill injected">INJECTED</span>   出现身份漂移、system prompt 泄漏或 relay 内部 token<br>
+<span class="pill failed">FAILED</span>     该模型在该 endpoint 全部 round 都报错（4xx / 5xx / timeout）
+</p>
+
+<blockquote>
+  注意：<code>FAILED</code> 表示 <b>性能数据不可用</b>（没有任何成功 round 算 TTFT），但
+  <b>错误信息</b>（HTTP 状态、relay 报文、request_id）仍然完整保留在报告的错误面板里。
+</blockquote>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="metrics">7. 性能指标定义</h2>
+
+<table>
+  <thead><tr><th>指标</th><th>含义</th><th>实现</th></tr></thead>
+  <tbody>
+    <tr><td><b>TTFT</b></td><td>Time-To-First-Token：从发请求到 SSE 流里读到第一段非空 content 的秒数</td><td><code>time.perf_counter()</code> 抓取，仅成功 round 入样</td></tr>
+    <tr><td><b>Total</b></td><td>总耗时：从发请求到 <code>[DONE]</code>（或最后一个 chunk）的秒数</td><td>同上</td></tr>
+    <tr><td><b>avg / min / max</b></td><td>样本均值与极值</td><td>—</td></tr>
+    <tr><td><b>p50 / p90 / p95 / p99</b></td><td>线性插值百分位（与 numpy 行为一致）</td><td><code>perf/metrics.py</code></td></tr>
+    <tr><td><b>stdev</b></td><td>样本标准差（n-1）</td><td>—</td></tr>
+    <tr><td><b>output_chars</b></td><td>响应正文字符数（用来侧面观察是不是被 relay 截断）</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<p class="small">
+  失败 round 不进 TTFT/Total 样本，但<b>会单独计入 success_rate / failed_rounds</b>。
+  失败超时也会被实测到 <code>timeout</code> 上限那个秒数，但不污染百分位数据。
+</p>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="errors">8. 异常捕获：超时 / 4xx / 5xx 都进报告</h2>
+
+<p>每一轮失败都会单独留一条记录，含：</p>
+<ul>
+  <li>HTTP 状态码（<code>0</code> 表示传输层错误，比如 SSL/timeout）</li>
+  <li>错误正文前 400 字节（<code>HTTP 503: {"error":...,"request_id":"..."}</code>）</li>
+  <li>已经接收到的部分文本（如果在流中途断开）</li>
+  <li>所属的 round 序号 / 模型 / endpoint</li>
+</ul>
+
+<p>HTML 报告里展开 <b>Per-round detail</b> 即可看到每一条；<b>X failed rounds</b> 折叠面板会聚合相同错误。</p>
+
+<h4>常见类型示例</h4>
+<table>
+  <thead><tr><th>错误</th><th>含义</th><th>处理建议</th></tr></thead>
+  <tbody>
+    <tr><td><code>HTTP 503 no available accounts</code></td><td>relay 上游账号池暂时空</td><td>过几分钟重试，或换 relay</td></tr>
+    <tr><td><code>HTTP 403 token has no access to model X</code></td><td>该 key 没有这个模型权限</td><td>YAML 中给该 endpoint 设一个允许的 <code>models:</code> 子集</td></tr>
+    <tr><td><code>HTTP 400 'temperature' is deprecated</code></td><td>新模型不接受 temperature 字段</td><td>本工具默认就不传 temperature，可以无视</td></tr>
+    <tr><td><code>timeout: read operation timed out</code></td><td>relay 接受请求但不返回</td><td>提高 <code>timeout</code>，或确认上游可达</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="extend">9. 扩展能力</h2>
+
+<h4>9.1 自定义 prompt</h4>
+<pre><code># 单一 prompt
+python scripts/perf-bench.py URL KEY gpt --prompt "讲一个简短的笑话"
+
+# 多 prompt 轮换（YAML）
+test:
+  prompts:
+    - "请介绍北京好吃的"
+    - "讲一个简短的笑话"
+    - "用 Python 写一个二分查找"
+  rounds: 9   # round i 用 prompts[i % 3]
+
+# 多 prompt 轮换（CLI）
+python scripts/perf-bench.py URL KEY gpt --prompts-file prompts.txt --rounds 12</code></pre>
+
+<h4>9.2 批量 / 并发</h4>
+<pre><code># concurrency &gt;1 = 同一个 (endpoint, model) 的 N 个 round 并发发送
+python scripts/perf-bench.py URL KEY gpt --rounds 20 --concurrency 5</code></pre>
+
+<h4>9.3 测试轮数</h4>
+<pre><code>--rounds N   # 每个 (endpoint, model) 跑 N 次（默认 10）</code></pre>
+
+<h4>9.4 测试模型</h4>
+<pre><code># 显式覆盖 vendor 预设
+python scripts/perf-bench.py URL KEY gpt \
+    --model gpt-4o-mini --model gpt-5-codex
+
+# YAML
+endpoints:
+  - name: x
+    base_url: ...
+    api_key: ...
+    models: [gpt-5.5, claude-sonnet-4-6, deepseek-chat]</code></pre>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="output">10. 输出文件</h2>
+
+<table>
+  <thead><tr><th>文件</th><th>内容</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>&lt;name&gt;.json</code></td>
+      <td>schema_version=1 的结构化结果，包含每一 round 的原始数据</td>
+      <td>二次分析、对接 BI / 仪表板</td>
+    </tr>
+    <tr>
+      <td><code>&lt;name&gt;.html</code></td>
+      <td>单文件页面，把同上 JSON 嵌入到 <code>window.__BENCH_DATA__</code> 然后 vanilla JS 渲染</td>
+      <td>分享给不方便跑 Python 的人，本地直接双击打开</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>报告分三大区块：</p>
+<ol>
+  <li><b>Overview</b> — endpoints 数、组合数、总成功率</li>
+  <li><b>Side-by-side comparison</b> — 跨 endpoint × model 的指标 + 验纯 verdict 一览表</li>
+  <li><b>Endpoint blocks</b> — 每个 endpoint 一段，含 8 个统计卡片、延迟分布表、纯度问题列表、错误面板、可展开的每轮明细</li>
+</ol>
+
+<!-- ─────────────────────────────────────────────────────── -->
+
+<h2 id="cli">11. CLI 完整参数</h2>
+
+<pre><code>usage: perf-bench.py [-h] [--config CONFIG] [--url URL] [--key KEY]
+                     [--vendor {gpt,claude}] [--name NAME]
+                     [--format {openai,anthropic}]
+                     [--prompt PROMPT] [--prompts-file FILE]
+                     [--rounds N] [--concurrency N] [--timeout SEC]
+                     [--max-tokens N] [--temperature T]
+                     [--model M] [--system S]
+                     [--output PATH] [--json PATH] [--title T] [--quiet]
+                     [&lt;url&gt; &lt;key&gt; &lt;vendor&gt;]</code></pre>
+
+<table>
+  <thead><tr><th>参数</th><th>说明</th><th>默认</th></tr></thead>
+  <tbody>
+    <tr><td><code>--config</code></td><td>YAML 配置路径（多端点）</td><td>—</td></tr>
+    <tr><td><code>--url / --key</code></td><td>单 endpoint 形式</td><td>—</td></tr>
+    <tr><td><code>--vendor</code></td><td>厂商预设：gpt / claude</td><td>—</td></tr>
+    <tr><td><code>--prompt</code></td><td>测试 prompt</td><td>请介绍北京好吃的</td></tr>
+    <tr><td><code>--rounds</code></td><td>每个 (endpoint, model) 轮次</td><td>10</td></tr>
+    <tr><td><code>--concurrency</code></td><td>并发数</td><td>1</td></tr>
+    <tr><td><code>--timeout</code></td><td>每请求超时（秒）</td><td>60</td></tr>
+    <tr><td><code>--max-tokens</code></td><td>max_tokens</td><td>512</td></tr>
+    <tr><td><code>--temperature</code></td><td>温度（不传时省略字段，最大兼容）</td><td>不传</td></tr>
+    <tr><td><code>--model</code></td><td>显式模型（可重复，覆盖 vendor）</td><td>—</td></tr>
+    <tr><td><code>--output</code></td><td>HTML 路径</td><td>perf-report.html</td></tr>
+    <tr><td><code>--json</code></td><td>JSON 路径</td><td>跟 HTML 同名</td></tr>
+  </tbody>
+</table>
+
+<h2>12. 故障排查清单</h2>
+<ul>
+  <li><b>为什么所有 round 都 timeout？</b> 检查 endpoint 是否支持 SSE，<code>curl https://x/v1/models</code> 是否能返回；如果 GET 通但 POST stream 不通，多半是 relay 的上游账号池/路由出问题。</li>
+  <li><b>为什么 verdict=FAILED？</b> 该 (endpoint, model) 没有任何成功 round。看错误面板里的 HTTP 报文；典型是 4xx 权限或 5xx 上游空。</li>
+  <li><b>为什么 TTFT 比直接 OpenAI 慢一倍？</b> Relay 一般会把请求转发给上游再流式回吐，多一跳；某些 relay 还会先把上游响应缓冲完再发流（伪流式），这种情况下 TTFT ≈ Total。</li>
+  <li><b>为什么 verdict=INJECTED 但内容看着正常？</b> 看 issue 列表 — 多半是 <code>system_prompt_leak</code>（响应里漏了模板字符串）或 <code>identity_leak</code>（不该说"我是 GPT"却说了）。</li>
+</ul>
+
+<div class="meta" style="margin-top:38px">
+  perf-bench is part of the api-relay-audit project.
+  Source code: <code>api_relay_audit/perf/</code> (streaming / metrics / purity / runner / report) +
+  <code>scripts/perf-bench.py</code> CLI.
+</div>
+
+</body>
+</html>

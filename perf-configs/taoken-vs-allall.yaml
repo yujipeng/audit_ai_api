@@ -1,0 +1,31 @@
+# Two-endpoint comparison template (taoken vs allall).
+#
+# Replace the placeholder API keys with your own.
+#
+# Run with:
+#   python scripts/perf-bench.py --config perf-configs/taoken-vs-allall.yaml \
+#       --output reports/taoken-vs-allall.html
+
+test:
+  prompt: "请介绍北京好吃的"
+  rounds: 10
+  concurrency: 1
+  timeout: 30
+  max_tokens: 512
+  # temperature deliberately omitted — newer models such as claude-opus-4-7
+  # reject any temperature value with HTTP 400.
+  format: openai
+
+default_models:
+  - gpt-5.5
+  - gpt-4o-mini
+  - claude-opus-4-7
+
+endpoints:
+  - name: taoken
+    base_url: https://taoken.ai
+    api_key: sk-REPLACE_ME_TAOKEN_KEY
+
+  - name: allall
+    base_url: https://api.allall.ai
+    api_key: sk-REPLACE_ME_ALLALL_KEY
