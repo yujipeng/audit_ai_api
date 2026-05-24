@@ -274,6 +274,112 @@ def test_standalone_uses_perf_counter_not_wall_clock(monkeypatch):
     assert result["latencies"] == [1.0, 1.0, 1.0]
 
 
+# ---------------------------------------------------------------------------
+# Story-1 (S1-probe-core/types) probe types Section parity
+# ---------------------------------------------------------------------------
+
+
+def _extract_probe_types_section(path: Path) -> str:
+    """Slice the ``# === probe types ===`` block from a file. Both
+    ``audit.py`` (standalone) and any sibling reference that participates in
+    the dual-distribution invariant MUST surround the probe types block with
+    ``# === probe types ===`` / ``# === /probe types ===`` markers."""
+    text = path.read_text(encoding="utf-8")
+    start_marker = "# === probe types ===\n"
+    end_marker = "# === /probe types ===\n"
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    if start == -1:
+        raise AssertionError(
+            f"Could not find '# === probe types ===' opening marker in {path}"
+        )
+    if end == -1:
+        raise AssertionError(
+            f"Could not find '# === /probe types ===' closing marker in {path}"
+        )
+    return text[start + len(start_marker):end]
+
+
+def test_probe_types_section_present_in_standalone():
+    """Story-1 dual-distribution: standalone ``audit.py`` must inline the
+    probe types dataclasses inside a ``# === probe types ===`` Section block.
+    """
+    section = _extract_probe_types_section(REPO_ROOT / "audit.py")
+    # Sanity: every dataclass that downstream slices consume must appear.
+    for needle in (
+        "PROBE_STATUS",
+        "PROBE_VERDICT",
+        "class ProbeError",
+        "class ReachabilityResult",
+        "class AuthSniffResult",
+        "class ModelsDiffResult",
+        "class RateLimitResult",
+        "class InfraHint",
+        "class ProbeReport",
+        'SCHEMA_VERSION = "1.0"',
+    ):
+        assert needle in section, (
+            f"Standalone audit.py probe types Section block missing {needle!r}; "
+            "dual-distribution invariant would diverge from "
+            "api_relay_audit/probe/types.py."
+        )
+
+
+def test_probe_types_constants_parity():
+    """Story-1 dual-distribution: PROBE_STATUS, PROBE_VERDICT, and the
+    frozen schema_version literal must match character-for-character
+    between ``api_relay_audit/probe/types.py`` and standalone audit.py.
+    """
+    from api_relay_audit.probe.types import (
+        PROBE_STATUS as MODULAR_STATUS,
+        PROBE_VERDICT as MODULAR_VERDICT,
+        ProbeReport as ModularProbeReport,
+    )
+
+    standalone = _load_standalone_audit()
+
+    assert standalone.PROBE_STATUS == MODULAR_STATUS, (
+        "PROBE_STATUS drift between api_relay_audit/probe/types.py "
+        "and standalone audit.py."
+    )
+    assert standalone.PROBE_VERDICT == MODULAR_VERDICT, (
+        "PROBE_VERDICT drift between api_relay_audit/probe/types.py "
+        "and standalone audit.py."
+    )
+    assert standalone.ProbeReport.SCHEMA_VERSION == ModularProbeReport.SCHEMA_VERSION, (
+        "ProbeReport.SCHEMA_VERSION drift between distributions."
+    )
+
+
+def test_probe_dataclass_fields_parity():
+    """Each Story-1 dataclass must declare an identical set of field names
+    + defaults between the modular and standalone distributions."""
+    from dataclasses import fields as dc_fields
+
+    import api_relay_audit.probe.types as modular_types
+
+    standalone = _load_standalone_audit()
+
+    for cls_name in (
+        "ProbeError",
+        "ReachabilityResult",
+        "AuthSniffResult",
+        "ModelsDiffResult",
+        "RateLimitResult",
+        "InfraHint",
+        "ProbeReport",
+    ):
+        modular_cls = getattr(modular_types, cls_name)
+        standalone_cls = getattr(standalone, cls_name)
+        modular_field_names = [f.name for f in dc_fields(modular_cls)]
+        standalone_field_names = [f.name for f in dc_fields(standalone_cls)]
+        assert modular_field_names == standalone_field_names, (
+            f"Field-name order drift on {cls_name} between modular "
+            f"api_relay_audit/probe/types.py and standalone audit.py: "
+            f"modular={modular_field_names!r}, standalone={standalone_field_names!r}"
+        )
+
+
 def test_standalone_stream_model_helper_parity():
     """Regression: missing message_start.model must no longer pass as
     Claude-like on either distribution."""
