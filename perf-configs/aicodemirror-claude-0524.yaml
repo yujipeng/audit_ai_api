@@ -1,0 +1,24 @@
+# aicodemirror Claude 多模型对比测试
+#
+# Run with:
+#   python scripts/perf-bench.py --config perf-configs/aicodemirror-claude-0524.yaml \
+#       --output reports/aicodemirror-claude-0524.html
+
+test:
+  prompt: "请介绍北京好吃的，同时返回信息最后说明一下当前什么模型"
+  rounds: 10
+  concurrency: 1
+  timeout: 60
+  max_tokens: 512
+  # temperature 故意省略 — claude-opus-4-7 等新模型会以 HTTP 400 拒绝任何 temperature 值
+  format: anthropic 
+
+endpoints:
+  - name: aicodemirror-claude
+    base_url: https://api.aicodemirror.com/api/claudecode
+    api_key: sk-ant-api03-5cOMBmNZdKGTwXEdh6qBCitPS30eHL0wvjQvDmrtkDE0aov5Q_WZsSe70KdEWUbK34RoKtZbX1Rjp0CZGIR_Pg
+    models:
+      - claude-haiku-4-5-20251001
+      - claude-sonnet-4-6
+      - claude-opus-4-6
+      - claude-opus-4-7

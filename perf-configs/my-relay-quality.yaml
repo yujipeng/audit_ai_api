@@ -1,0 +1,53 @@
+# claude-code-cli + codex-cli 双通路质量测试
+#
+# 适用场景：评估一个 AI API 中转 (relay) 在 claude-code-cli 和 codex-cli
+# 实际使用的模型上的性能 + 纯净度。
+#
+# 同一个 relay 拆成两行：
+#   - 一行走 Anthropic 通路 (format: anthropic) 测 Claude 4.x
+#   - 一行走 OpenAI    通路 (format: openai)    测 GPT-5 系列 (含 codex 特化)
+# 多家 relay 横向对比时，照着加行即可。
+#
+# Run with:
+#   python scripts/perf-bench.py --config perf-configs/my-relay-quality.yaml \
+#       --output reports/my-relay-quality.html
+
+test:
+  # 选用能同时考察"流式速度"和"语言纯净度"的中文 prompt
+  prompt: "请用中文介绍北京好吃的，最后告诉我你是哪个模型"
+  rounds: 10            # 每个 (endpoint, model) 跑 10 轮，足够稳 p95
+  concurrency: 1        # 想看并发劣化时再调大（如 5）
+  timeout: 60
+  max_tokens: 512
+  # temperature 故意不写 — claude-opus-4-7 / gpt-5.5 等新模型会以
+  # HTTP 400 拒绝任何 temperature 值
+
+endpoints:
+  # ===== claude-code-cli 通路 =====
+  - name: relay-A-claude
+    base_url: https://your-relay.example.com   # 部分 relay 的 Claude 通路有独立路径，如 /api/claudecode
+    api_key: sk-ant-REPLACE_ME
+    vendor: claude                              # 自动展开: haiku-4-5 / sonnet-4-6 / opus-4-7
+    format: anthropic                           # 关键：Anthropic 原生格式
+
+  # ===== codex-cli 通路 =====
+  - name: relay-A-gpt
+    base_url: https://your-relay.example.com
+    api_key: sk-REPLACE_ME
+    vendor: gpt                                 # 自动展开: gpt-5.2 / 5.3-codex / 5.5
+    format: openai                              # 关键：OpenAI 兼容格式
+    # 想精确对齐 codex-cli 实际用的模型，可显式覆盖 vendor：
+    # models:
+    #   - gpt-5.3-codex
+
+  # ===== 想对比第二家 relay，照搬两行即可 =====
+  # - name: relay-B-claude
+  #   base_url: https://another-relay.example.com
+  #   api_key: sk-ant-REPLACE_ME
+  #   vendor: claude
+  #   format: anthropic
+  # - name: relay-B-gpt
+  #   base_url: https://another-relay.example.com
+  #   api_key: sk-REPLACE_ME
+  #   vendor: gpt
+  #   format: openai
