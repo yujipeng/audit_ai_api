@@ -1,6 +1,6 @@
 ---
-issue: [TES-113](mention://issue/29496d1f-10de-4be6-bd52-6643ae737fa2)
-parent_issue: [TES-97](mention://issue/fe5fb483-8cd4-4cc1-8fe3-45f78ff72696)
+issue: [TES-107](mention://issue/88b1b282-4243-454a-803c-7d3cc035a674)
+parent_issue: [TES-93](mention://issue/c8ac1338-5392-4959-9f55-d64745167f4c)
 target_repo: https://github.com/yujipeng/audit_ai_api
 target_feature_branch: feature/audit-ai-relay
 subsystem: probe-core
