@@ -492,6 +492,34 @@ def run(self, ctx, *, parallel: bool = False, max_workers: int = 6, ...):
 
 → 本片 MVP 只接受 `parallel=False`（默认值）；P1 Story 加 `parallel=True` 分支不破坏现有调用方。
 
+### 5.3 误报基线旁路（P1 预留，对齐 PM [7076cd68](mention://comment/7076cd68) Q3 立场）
+
+PM 立场：MVP 不内置「已知诚实模型误报率」基线；引入 `--baseline <path>` 旁路 + `tests/test_purity_baseline_*.py` 集成回归。
+
+design 落地路径：
+
+```python
+# scripts/purity-eval.py CLI（P1 增）
+parser.add_argument(
+    "--baseline", type=str, default=None,
+    help="P1: 载入一份已知诚实模型的 PurityReportV2 JSON 做 diff，仅命中差异告警",
+)
+```
+
+```python
+# api_relay_audit/evaluator/baseline.py（P1 文件）
+def diff_against_baseline(
+    current: PurityReportV2,
+    baseline_path: str,
+) -> list[BaselineDiff]:
+    """对比当前 report 与基线 JSON，返回 hits 级别差异列表。"""
+    ...
+```
+
+本片 MVP 不交付：不内置基线 JSON、不在 evaluator 内做 score 阈值校准（PM Q1 立场决定）。MVP 误报兜底机制 = hits.snippet ≤ 200 chars 必填 + verdict_reason 必填 + `--raw-keep` 留底（已在 §4.3 / §4.5 / §4.6 锁定）；用户怀疑误报时人工复核第一手证据。
+
+→ P1 Story 拆分时（不在本切片）：新增 `dimensions/baseline.py`（虚拟 evaluator 形态）或 `evaluator/baseline.py`（aggregator 后处理）二选一，由届时 design 修订决定。
+
 ---
 
 ## 6. 性能与容量
@@ -611,3 +639,9 @@ Story-2/3/4/5 可并行（不同文件，无冲突），Story-6 收口。
 - ✅ 「不破坏现有 18 个测试」— §11 校验 + §7 R3 / R4 / R5 缓解
 - ✅ PRD §4.4 / §4.5 / §4.6 命名 / 五档 verdict / 升档规则零偏差 — §4 数据模型
 - ✅ PRD §7.2 Q1/Q2 未决问题回答 — §10
+
+## 附录 B：与 PM [7076cd68](mention://comment/7076cd68) 三点立场对齐核对
+
+- ✅ **Q1 score 形态**：design `EvaluatorResult` 字段集（dimension/verdict/verdict_reason/rounds_total/rounds_ok/hits/duration_s/raw_artifacts）零 score；severity 仅在 `hits[].severity` 三档；verdict 五档；`Overall.confidence` 明文「不参与升档」(§4.5 末句)
+- ✅ **Q2 多模型对照矩阵**：`EvaluatorPipeline.run()` 描述单次单 target 单 vendor（§5.1）；多 provider × model 批量矩阵显式归 S5（§8 接口契约表第 4 行）；无 `run_matrix` / `MatrixCell` 类型
+- ✅ **Q3 误报基线**：MVP 不内置基线（§5.3 新增）；`--baseline <path>` 旁路 P1 预留；MVP 兜底 = hits.snippet ≤ 200 chars + verdict_reason 必填 + `--raw-keep` 留底（§4.3 / §4.5 / §4.6 已锁）；集成层 P0 测试 = `tests/test_evaluator_pipeline.py`（§9 Story-6）
