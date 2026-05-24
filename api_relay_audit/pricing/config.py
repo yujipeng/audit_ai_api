@@ -135,8 +135,9 @@ def enforce_billing_safety(
 
     1. ``accumulated_cost_usd`` ≤ ``cost_cap_usd`` — else abort.
     2. ``runs_so_far`` ≤ ``max_runs`` — else abort.
-    3. ``response_bytes`` ≤ ``max_response_bytes`` — else mark for truncation
-       (response is still returned, capped at the limit).
+    3. ``response_bytes`` ≤ ``max_response_bytes`` — else signals caller to
+       truncate response at ``truncated_at``; the caller is responsible for
+       the actual byte truncation.
     """
     if accumulated_cost_usd > cfg.cost_cap_usd:
         raise BillingSafetyError(

@@ -15,6 +15,11 @@ Bands (PRD §6.2):
 - 30% ≤ ``|drift_pct|`` < 100% → ``token_drift_warn``
 - ``|drift_pct|`` ≥ 100%  → ``token_drift_critical``
 - balance drift ≥ 25% (when reported) → ``balance_drift_high``
+
+Precision-gate scope: the DoD precision gate against TES-94's ≥ 30 real-sample
+corpus (p50 ≤ 30% / p95 ≤ 50%) is punted to Story-E (TES-94 follow-up). The
+in-tree synthetic ``TestL0PrecisionFixture`` is a ratio-table-honest sanity
+check only and must not be read as the empirical precision claim.
 """
 
 from __future__ import annotations

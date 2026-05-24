@@ -136,7 +136,16 @@ class TestL0Verdicts:
 
 
 class TestL0PrecisionFixture:
-    """Synthetic 30-sample precision check (PRD §5.1 L1 ±20-30%)."""
+    """Synthetic 30-sample precision check (PRD §5.1 L1 ±20-30%).
+
+    NOTE: This is a synthetic-baseline guard, not the DoD precision gate.
+    The DoD-mandated precision gate against the TES-94 real-sample corpus
+    (≥ 30 honest samples, p50 ≤ 30% / p95 ≤ 50%) is punted to Story-E
+    (TES-94 follow-up). Do NOT read this fixture as evidence that the
+    real-sample precision gate is closed — it only proves that, given
+    ratio-table-honest inputs, the evaluator computes near-zero drift
+    (an upper-bound sanity check, not an empirical precision claim).
+    """
 
     def test_p50_under_30_pct_p95_under_50_pct(self):
         ev = L0CharacterRatioEvaluator()
