@@ -1,11 +1,12 @@
-"""Factory — explicit pipeline assembly (S2-1 placeholder, S2-2/3 will replace).
+"""Factory — explicit pipeline assembly.
 
-S2-1 装载 7 个 NoOpEvaluator 占位（6 default-on + 1 web3 default-off），让 pipeline / aggregator
-端到端可跑、CLI 可冒烟、reviewer 可验证 _select 行为；S2-2 起逐一替换为真实 wrapper。
+S2-1 用 NoOp 占位整张 pipeline；S2-2 / S2-3 起逐一替换为真实 wrapper。
+本片：S2-3 已替 web3 占位为 ``Web3InjectionEvaluator``；其余 6 维仍为 NoOp（S2-2 接管）。
 """
 from __future__ import annotations
 
 from .base import DimensionId, Evaluator, EvaluatorResult, ProbeContext
+from .dimensions.web3_injection import Web3InjectionEvaluator
 from .pipeline import EvaluatorPipeline
 
 
@@ -33,7 +34,7 @@ class _NoOpEvaluator(Evaluator):
 
 
 def default_purity_pipeline() -> EvaluatorPipeline:
-    """Build the default pipeline with all dimensions registered (S2-1 placeholder)."""
+    """Build the default pipeline with all dimensions registered."""
     return EvaluatorPipeline(
         [
             _NoOpEvaluator("injection"),
@@ -42,6 +43,6 @@ def default_purity_pipeline() -> EvaluatorPipeline:
             _NoOpEvaluator("tool"),
             _NoOpEvaluator("refusal"),
             _NoOpEvaluator("leak"),
-            _NoOpEvaluator("web3_injection", default_in_profile=False),
+            Web3InjectionEvaluator(),
         ]
     )
