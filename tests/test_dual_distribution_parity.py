@@ -11,6 +11,7 @@ so that drift is caught immediately.
 """
 
 from pathlib import Path
+import json
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -691,4 +692,116 @@ def test_probe_auth_sniff_behavior_parity():
         assert modular_r.signals == standalone_r.signals, (
             f"{name}: signals drift modular={modular_r.signals!r} "
             f"standalone={standalone_r.signals!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Story-4 (S1-probe-core/P3 models-diff) dual-distribution parity
+# ---------------------------------------------------------------------------
+
+
+def _extract_models_diff_section(path: Path) -> str:
+    """Slice the ``# === models_diff helpers ===`` block from a file.
+    Both ``audit.py`` (standalone) and any sibling reference that
+    participates in the Story-4 dual-distribution invariant MUST surround
+    the block with ``# === models_diff helpers ===`` /
+    ``# === /models_diff helpers ===`` markers."""
+    text = path.read_text(encoding="utf-8")
+    start_marker = "# === models_diff helpers ===\n"
+    end_marker = "# === /models_diff helpers ===\n"
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    if start == -1:
+        raise AssertionError(
+            f"Could not find '# === models_diff helpers ===' opening marker in {path}"
+        )
+    if end == -1:
+        raise AssertionError(
+            f"Could not find '# === /models_diff helpers ===' closing marker in {path}"
+        )
+    return text[start + len(start_marker):end]
+
+
+def test_models_diff_section_present_in_standalone():
+    """Story-4 dual-dist: standalone ``audit.py`` must inline the
+    models-diff helpers + three official-models dict constants inside
+    a ``# === models_diff helpers ===`` Section block."""
+    section = _extract_models_diff_section(REPO_ROOT / "audit.py")
+    for needle in (
+        "_OFFICIAL_MODELS_OPENAI",
+        "_OFFICIAL_MODELS_ANTHROPIC",
+        "_OFFICIAL_MODELS_GEMINI",
+        "_OFFICIAL_MODELS_BY_VENDOR",
+        "def is_suspicious_alias",
+        "def _classify_vendor",
+        "def fetch_models_diff",
+        '"catalog_version": "2026-05-25"',
+    ):
+        assert needle in section, (
+            f"Standalone audit.py models_diff Section block missing {needle!r}; "
+            "dual-distribution invariant would diverge from "
+            "api_relay_audit/probe/models_diff.py + references/official_models_*.json."
+        )
+
+
+def test_models_diff_inline_dicts_match_reference_files():
+    """Story-4 dual-dist: the three inline dict constants in standalone
+    audit.py MUST equal the JSON files under
+    api_relay_audit/probe/references/ field-for-field. This is what lets
+    PJM bump the curated catalog in one place (the JSON) and re-run
+    parity to confirm the standalone block was bumped in lockstep."""
+    standalone = _load_standalone_audit()
+
+    for vendor in ("openai", "anthropic", "gemini"):
+        ref_path = (
+            REPO_ROOT
+            / "api_relay_audit"
+            / "probe"
+            / "references"
+            / f"official_models_{vendor}.json"
+        )
+        ref = json.loads(ref_path.read_text(encoding="utf-8"))
+        inline = getattr(standalone, f"_OFFICIAL_MODELS_{vendor.upper()}")
+
+        assert ref["catalog_version"] == inline["catalog_version"], (
+            f"{vendor} catalog_version drift: "
+            f"reference={ref['catalog_version']!r} vs "
+            f"standalone={inline['catalog_version']!r}"
+        )
+        assert ref["models"] == inline["models"], (
+            f"{vendor} models[] drift between reference JSON and standalone dict"
+        )
+        assert ref["top_priority"] == inline["top_priority"], (
+            f"{vendor} top_priority[] drift between reference JSON and standalone dict"
+        )
+
+
+def test_models_diff_suspicious_alias_parity():
+    """is_suspicious_alias must give identical verdicts in both
+    distributions across the F3 fixture seeds + key negatives."""
+    from api_relay_audit.probe.models_diff import is_suspicious_alias as modular
+
+    standalone = _load_standalone_audit()
+
+    for model_id in (
+        # positives
+        "gpt-5-pro",
+        "gpt-5-ultra",
+        "gpt-4o-turbo-max",
+        "claude-3-mini",
+        "claude-4-flash",
+        "claude-opus-5",
+        "gemini-3.0-ultra",
+        "gemini-pro-max",
+        "gpt-4-turbo-2024",
+        # negatives
+        "gpt-4o",
+        "claude-3-5-sonnet-20241022",
+        "gemini-2.5-flash",
+        "internal-router-001",
+        "auto",
+        "",
+    ):
+        assert modular(model_id) == standalone.is_suspicious_alias(model_id), (
+            f"is_suspicious_alias({model_id!r}) drift between modular and standalone"
         )
