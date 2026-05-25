@@ -167,6 +167,44 @@ def _step_section(step: str, cells: List[CellView], sentinels: Sequence[str]) ->
 """.strip()
 
 
+def _error_item(cell: CellView, sentinels: Sequence[str]) -> str:
+    """Render one errored cell as an Errors-section list item.
+
+    Mirrors `reporting.render_markdown._error_line` so the MD/HTML/JSON tri
+    surfaces the same `step/endpoint — error.type: redacted_message` body.
+    Traceback is truncated to ``PAYLOAD_NOTE_MAX`` and run through `_redact`
+    on the way out so sentinel fuzz can never leak through this path.
+    """
+    err = cell.error or {}
+    typ = str(err.get("type") or "Error")
+    msg = _redact(str(err.get("message") or ""), sentinels)
+    tb = err.get("traceback")
+    tb_html = ""
+    if tb:
+        tb_redacted = _redact(str(tb)[:PAYLOAD_NOTE_MAX], sentinels)
+        tb_html = f'<pre class="note">{_esc(tb_redacted)}</pre>'
+    return (
+        f'<li>'
+        f'{_esc(cell.step)}/{_esc(cell.endpoint)} — '
+        f'<strong>{_esc(typ)}</strong>: {_esc(msg)}'
+        f'{tb_html}'
+        f'</li>'
+    )
+
+
+def _errors_section(view: ReportView, sentinels: Sequence[str]) -> str:
+    errored = [c for c in view.cells if c.status == "error"]
+    if not errored:
+        return ""
+    items = "\n".join(_error_item(c, sentinels) for c in errored)
+    return f"""
+<h2>Errors</h2>
+<ul class="errors">
+{items}
+</ul>
+""".strip()
+
+
 def _summary_chips(view: ReportView) -> str:
     s = view.summary
     chips: List[str] = [
@@ -189,6 +227,7 @@ def render(record: Mapping[str, Any], *, sentinel_keys: Iterable[str] | None = N
         sections.append(_step_section(step, cells, sentinels))
 
     body_sections = "\n".join(sections)
+    errors_block = _errors_section(view, sentinels)
 
     html_doc = f"""<!doctype html>
 <html lang="en">
@@ -213,6 +252,7 @@ def render(record: Mapping[str, Any], *, sentinel_keys: Iterable[str] | None = N
 <p>{_summary_chips(view)}</p>
 <p class="meta">redacted_key_ids: {", ".join(f"<code>{_esc(k)}</code>" for k in view.redacted_key_ids) or "(none)"}</p>
 {body_sections}
+{errors_block}
 <h2>Diff</h2>
 <div class="diff" id="diff-placeholder">No baseline diff embedded. See <code>diff.md</code> in the same artifact bundle.</div>
 <script>

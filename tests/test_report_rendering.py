@@ -114,14 +114,48 @@ class TestMarkdownGoldenDiff:
 
 class TestTriConsistency:
     def test_cell_coverage_md_vs_json(self, run_record):
+        """Each (step, endpoint) cell must appear under the matching ``## step``
+        section header in the Markdown body.
+
+        Reviewer-1 anchor: an `endpoint in md` substring check passes even when
+        a renderer silently drops a cell whose endpoint name happens to recur
+        in another step (the fixture has both ``probe/alpha`` and
+        ``perf/alpha``). Slice the body into per-step sections and require
+        ``### {endpoint}`` to appear inside the matching slice — so dropping
+        any single cell, even one whose endpoint name recurs elsewhere, fails.
+        """
         from reporting.render_markdown import render as render_md
 
         md = render_md(run_record)
+        steps_in_order: list[str] = []
         for cell in run_record["cells"]:
-            # Each (step, endpoint) pair must appear somewhere in the Markdown
-            # body — guards against a renderer silently dropping cells.
-            tag = f"{cell['step']}"
-            assert tag in md, f"missing step {tag!r} in Markdown body"
+            if not steps_in_order or steps_in_order[-1] != cell["step"]:
+                steps_in_order.append(cell["step"])
+        section_bounds: dict[str, tuple[int, int]] = {}
+        for i, step in enumerate(steps_in_order):
+            header = f"\n## {step}\n"
+            start = md.find(header)
+            assert start >= 0, f"missing Markdown section for step {step!r}"
+            if i + 1 < len(steps_in_order):
+                next_header = f"\n## {steps_in_order[i + 1]}\n"
+                end = md.find(next_header, start + len(header))
+                assert end >= 0, (
+                    f"step section {step!r} not followed by next step header "
+                    f"{steps_in_order[i + 1]!r}"
+                )
+            else:
+                trailing = md.find("\n## Errors\n", start + len(header))
+                end = trailing if trailing >= 0 else len(md)
+            section_bounds[step] = (start, end)
+
+        for cell in run_record["cells"]:
+            start, end = section_bounds[cell["step"]]
+            endpoint_tag = f"### {cell['endpoint']}"
+            assert endpoint_tag in md[start:end], (
+                f"missing endpoint header {endpoint_tag!r} inside the "
+                f"{cell['step']!r} section — renderer silently dropped "
+                f"{cell['step']}/{cell['endpoint']}"
+            )
 
     def test_cell_coverage_html_vs_json(self, run_record):
         from reporting.render_html import render as render_html
@@ -169,6 +203,27 @@ class TestHtmlConstraints:
 
         html = render(run_record)
         assert html.lstrip().lower().startswith("<!doctype html")
+
+    def test_renders_error_section_for_errored_cells(self, run_record):
+        """HTML must surface error.type / endpoint for any errored cell.
+
+        Reviewer-1 G1 anchor: the fixture has ``probe/beta`` with
+        ``error.type=TimeoutError``. Markdown emits a ``## Errors`` block;
+        HTML previously only painted the row red, weakening tri-consistency
+        and giving sentinel-fuzz a free pass on the HTML surface. Mirror the
+        Markdown contract: a dedicated section listing each errored cell with
+        its ``step/endpoint`` and ``error.type``.
+        """
+        from reporting.render_html import render
+
+        html = render(run_record)
+        assert "<h2>Errors</h2>" in html, "HTML must include an Errors section"
+        assert "TimeoutError" in html, (
+            "HTML Errors section must surface error.type for fixture probe/beta"
+        )
+        assert "probe/beta" in html or ("probe" in html and "beta" in html), (
+            "HTML Errors section must reference the failing step/endpoint"
+        )
 
 
 # ---------------------------------------------------------------------------
