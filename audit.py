@@ -2473,6 +2473,186 @@ def probe_reachability(base_url, timeout_s=8.0):
 
 
 # ============================================================
+# Section 3c: probe auth-sniff (Story-3, S1 probe-core)
+# ============================================================
+#
+# Mirror of api_relay_audit/probe/auth_sniff.py. The block bracketed by
+# ``# === probe auth-sniff ===`` / ``# === /probe auth-sniff ===``
+# below is the dual-distribution Section for Story-3 (TES-151).
+# Mirror any classification-rule or envelope-detection change into
+# both files.
+
+# === probe auth-sniff ===
+import json as _probe_auth_json
+
+_PROBE_AUTH_PATH = "/v1/models"
+_PROBE_AUTH_TIMEOUT_S = 8
+_PROBE_AUTH_INVALID_TOKEN = "INVALID-TOKEN-FOR-AUTH-SNIFF-PROBE"
+_PROBE_AUTH_CUSTOM_HEADER_NAME = "api-key"
+_PROBE_AUTH_ORDER = ("bearer", "x-api-key", "custom", "invalid", "missing")
+
+
+def _probe_redact_error(error):
+    """Local copy of transparent_log.redact_error for the standalone."""
+    if error is None:
+        return None
+    for prefix in ("HTTP ", "curl failed"):
+        if error.startswith(prefix):
+            colon = error.find(":")
+            if colon != -1:
+                return error[:colon]
+            return error
+    return error
+
+
+def detect_envelope(body):
+    if not body:
+        return "absent"
+    try:
+        data = _probe_auth_json.loads(body)
+    except (ValueError, TypeError):
+        return "absent"
+    if not isinstance(data, dict):
+        return "absent"
+    if data.get("type") == "error" and isinstance(data.get("error"), dict):
+        return "anthropic-style"
+    err = data.get("error")
+    if isinstance(err, dict):
+        keys = set(err.keys())
+        if "message" in keys and (keys & {"type", "code"}):
+            return "openai-style"
+        return "non-standard"
+    if err is not None:
+        return "non-standard"
+    return "absent"
+
+
+def classify_auth(valid_status, invalid_status, missing_status):
+    def _ok(s):
+        return 200 <= s < 300
+    if _ok(missing_status) or _ok(invalid_status):
+        return "permissive"
+    if not _ok(valid_status):
+        return "broken"
+    return "strict"
+
+
+def _probe_auth_build_headers(scheme, key):
+    if scheme == "bearer":
+        return {"Authorization": f"Bearer {key}"}
+    if scheme == "x-api-key":
+        return {"x-api-key": key}
+    if scheme == "custom":
+        return {_PROBE_AUTH_CUSTOM_HEADER_NAME: key}
+    if scheme == "invalid":
+        return {"Authorization": f"Bearer {_PROBE_AUTH_INVALID_TOKEN}"}
+    if scheme == "missing":
+        return {}
+    raise ValueError(f"unknown scheme: {scheme}")
+
+
+def _probe_auth_key_position_for(scheme):
+    if scheme == "bearer":
+        return "Authorization"
+    if scheme == "x-api-key":
+        return "x-api-key"
+    if scheme == "custom":
+        return _PROBE_AUTH_CUSTOM_HEADER_NAME
+    return "unknown"
+
+
+def probe_auth_sniff(client):
+    api_key = getattr(client, "api_key", None) or ""
+    statuses = {}
+    bodies = {}
+    transport_errors = []
+    for scheme in _PROBE_AUTH_ORDER:
+        headers = _probe_auth_build_headers(scheme, api_key)
+        r = client.raw_request(
+            method="GET",
+            path=_PROBE_AUTH_PATH,
+            headers=headers,
+            body=b"",
+            content_type="application/json",
+            timeout=_PROBE_AUTH_TIMEOUT_S,
+        )
+        statuses[scheme] = r.get("status", 0) or 0
+        bodies[scheme] = r.get("body", "") or ""
+        if r.get("error"):
+            transport_errors.append((scheme, r.get("error")))
+
+    accepted_schemes = []
+    for scheme in ("bearer", "x-api-key", "custom"):
+        if 200 <= statuses[scheme] < 300:
+            accepted_schemes.append(scheme)
+
+    real_key_statuses = [statuses[s] for s in ("bearer", "x-api-key", "custom")]
+    valid_status = next(
+        (s for s in real_key_statuses if 200 <= s < 300),
+        max(real_key_statuses) if real_key_statuses else 0,
+    )
+
+    classification = classify_auth(
+        valid_status=valid_status,
+        invalid_status=statuses["invalid"],
+        missing_status=statuses["missing"],
+    )
+
+    envelope_401 = "absent"
+    envelope_403 = "absent"
+    for scheme, status in statuses.items():
+        body = bodies[scheme]
+        if status == 401 and envelope_401 == "absent":
+            envelope_401 = detect_envelope(body)
+        if status == 403 and envelope_403 == "absent":
+            envelope_403 = detect_envelope(body)
+
+    key_position = "unknown"
+    if accepted_schemes:
+        key_position = _probe_auth_key_position_for(accepted_schemes[0])
+
+    signals = []
+    if classification == "permissive":
+        signals.append("auth:permissive")
+        signals.append("auth:red_flag_no_real_authentication")
+    if classification == "broken":
+        signals.append("auth:broken")
+    if 200 <= statuses["missing"] < 300:
+        signals.append("auth:missing_auth_returns_2xx")
+    if 200 <= statuses["invalid"] < 300:
+        signals.append("auth:invalid_token_returns_2xx")
+
+    if transport_errors and len(transport_errors) == len(_PROBE_AUTH_ORDER):
+        first_scheme, first_err = transport_errors[0]
+        return AuthSniffResult(
+            status="error",
+            accepted_schemes=[],
+            envelope_401="absent",
+            envelope_403="absent",
+            key_position="unknown",
+            classification="broken",
+            signals=["auth:transport_error"],
+            error=ProbeError(
+                code=f"transport_error:{first_scheme}",
+                message=_probe_redact_error(str(first_err)) or "transport_error",
+            ),
+        )
+
+    return AuthSniffResult(
+        status="ok",
+        accepted_schemes=accepted_schemes,
+        envelope_401=envelope_401,
+        envelope_403=envelope_403,
+        key_position=key_position,
+        classification=classification,
+        signals=signals,
+        error=None,
+    )
+
+# === /probe auth-sniff ===
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 

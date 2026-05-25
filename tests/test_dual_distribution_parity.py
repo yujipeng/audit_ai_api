@@ -588,3 +588,107 @@ def test_standalone_stream_model_helper_parity():
         assert _check_stream_model(modular_signals) == standalone._check_stream_model(
             standalone_signals
         ), f"Standalone stream-model helper drift for model={model!r}"
+
+
+# ---------------------------------------------------------------------------
+# Story-3 (S1-probe-core/auth-sniff) probe auth-sniff Section parity
+# ---------------------------------------------------------------------------
+
+
+def test_probe_auth_sniff_section_present_in_standalone():
+    """Story-3 dual-distribution: standalone ``audit.py`` must inline the
+    auth-sniff probe inside a ``# === probe auth-sniff ===`` Section block."""
+    text = (REPO_ROOT / "audit.py").read_text(encoding="utf-8")
+    start_marker = "# === probe auth-sniff ===\n"
+    end_marker = "# === /probe auth-sniff ===\n"
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    assert start != -1, "Missing '# === probe auth-sniff ===' opening marker in audit.py"
+    assert end != -1, "Missing '# === /probe auth-sniff ===' closing marker in audit.py"
+    section = text[start + len(start_marker):end]
+    # Required surface — same names the modular module exports.
+    for needle in (
+        "def probe_auth_sniff(client)",
+        "def detect_envelope(body)",
+        "def classify_auth(",
+        '"permissive"',
+        '"strict"',
+        '"broken"',
+        '"openai-style"',
+        '"anthropic-style"',
+        '"non-standard"',
+        '"absent"',
+        "auth:red_flag_no_real_authentication",
+    ):
+        assert needle in section, (
+            f"Standalone audit.py probe auth-sniff Section missing {needle!r}; "
+            "dual-distribution invariant would diverge from "
+            "api_relay_audit/probe/auth_sniff.py."
+        )
+
+
+def test_probe_auth_sniff_behavior_parity():
+    """Story-3 dual-distribution: both implementations must produce an
+    identical ``AuthSniffResult`` shape on the same scripted inputs.
+
+    Spot-checks the three classification states + the OpenAI/Anthropic
+    envelopes. Catches behavioural drift even when the source text
+    diverges (e.g. one side adds a new signal string).
+    """
+    from unittest.mock import MagicMock
+
+    from api_relay_audit.probe.auth_sniff import probe_auth_sniff as modular_probe
+
+    standalone = _load_standalone_audit()
+
+    scenarios = [
+        # name, responses, expect_classification, expect_accepted, expect_envelope_401
+        (
+            "strict_bearer_openai_envelope",
+            [
+                {"status": 200, "body": '{"data": []}', "headers": {}, "error": None},
+                {"status": 401, "body": '{"error":{"message":"x","type":"y"}}', "headers": {}, "error": None},
+                {"status": 401, "body": '', "headers": {}, "error": None},
+                {"status": 401, "body": '', "headers": {}, "error": None},
+                {"status": 401, "body": '', "headers": {}, "error": None},
+            ],
+            "strict", ["bearer"], "openai-style",
+        ),
+        (
+            "permissive_missing_2xx",
+            [{"status": 200, "body": '{"data": []}', "headers": {}, "error": None}] * 5,
+            "permissive", ["bearer", "x-api-key", "custom"], "absent",
+        ),
+        (
+            "broken_all_401",
+            [{"status": 401, "body": '', "headers": {}, "error": None}] * 5,
+            "broken", [], "absent",
+        ),
+    ]
+
+    for name, responses, want_class, want_accepted, want_env401 in scenarios:
+        def _client(resps):
+            c = MagicMock()
+            c.api_key = "sk-test-key-12345-abcdef"
+            c.raw_request = MagicMock(side_effect=list(resps))
+            return c
+
+        modular_r = modular_probe(_client(responses))
+        standalone_r = standalone.probe_auth_sniff(_client(responses))
+
+        assert modular_r.classification == standalone_r.classification == want_class, (
+            f"{name}: classification drift modular={modular_r.classification!r} "
+            f"standalone={standalone_r.classification!r} want={want_class!r}"
+        )
+        assert modular_r.accepted_schemes == standalone_r.accepted_schemes == want_accepted, (
+            f"{name}: accepted_schemes drift modular={modular_r.accepted_schemes!r} "
+            f"standalone={standalone_r.accepted_schemes!r} want={want_accepted!r}"
+        )
+        assert modular_r.envelope_401 == standalone_r.envelope_401 == want_env401, (
+            f"{name}: envelope_401 drift modular={modular_r.envelope_401!r} "
+            f"standalone={standalone_r.envelope_401!r} want={want_env401!r}"
+        )
+        assert modular_r.signals == standalone_r.signals, (
+            f"{name}: signals drift modular={modular_r.signals!r} "
+            f"standalone={standalone_r.signals!r}"
+        )
