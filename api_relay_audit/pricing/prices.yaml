@@ -1,0 +1,48 @@
+# prices.yaml — vendor unit-price catalogue (Story TES-134 / S4-A baseline).
+#
+# Schema (frozen — see TES-134 §跨 Story 不变量 #3):
+#   <vendor>:
+#     <model>:
+#       input_per_1k:  <float, currency-native>
+#       output_per_1k: <float>
+#       currency: USD|CNY|EUR  # default USD
+#       notes: <str, optional>
+#
+# Prices are vendor list-prices captured 2026-05; treat as baseline only.
+# Story-E follow-up will introduce a scraper to refresh these in-place.
+
+anthropic:
+  claude-haiku-4-5:
+    input_per_1k: 0.001
+    output_per_1k: 0.005
+    currency: USD
+    notes: "Anthropic 2026-05 list price"
+  claude-sonnet-4-6:
+    input_per_1k: 0.003
+    output_per_1k: 0.015
+    currency: USD
+    notes: "Anthropic 2026-05 list price"
+  claude-opus-4-7:
+    input_per_1k: 0.015
+    output_per_1k: 0.075
+    currency: USD
+    notes: "Anthropic 2026-05 list price"
+
+openai:
+  gpt-4o-mini:
+    input_per_1k: 0.00015
+    output_per_1k: 0.0006
+    currency: USD
+    notes: "OpenAI 2026-05 list price"
+  gpt-4o:
+    input_per_1k: 0.0025
+    output_per_1k: 0.01
+    currency: USD
+    notes: "OpenAI 2026-05 list price"
+
+deepseek:
+  deepseek-chat:
+    input_per_1k: 0.001
+    output_per_1k: 0.002
+    currency: CNY
+    notes: "DeepSeek 2026-05 list price (CNY); fold to USD via fx table."
