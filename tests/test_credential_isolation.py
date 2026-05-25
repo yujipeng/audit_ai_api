@@ -210,3 +210,112 @@ class TestRule4_SentinelFuzz:
             artifacts = self._render_artifacts(variant)
             for name, body in artifacts.items():
                 assert variant not in body, f"variant {variant} leaked in {name}"
+
+
+class TestRule4b_SentinelFuzz_S5C_RenderPipelines:
+    """Same fuzz contract, but routed through the real S5-C render pipelines.
+
+    Where `TestRule4_SentinelFuzz` exercises the redact + bearer primitives in
+    isolation, this class wires the actual `reporting.render_markdown` /
+    `reporting.render_html` / `orchestration.baseline` entry points so a
+    regression in any one downstream surface (e.g. a new payload field that
+    bypasses the existing redact call site) trips here.
+    """
+
+    @staticmethod
+    def _polluted_record(sentinel: str) -> dict:
+        from orchestration.run_record import new_cell, new_record
+
+        rec = new_record(
+            code_version="fuzz",
+            config_digest="cfg-fuzz",
+            redacted_key_ids=["aaaa1111"],
+        )
+        c = new_cell(
+            step="probe",
+            endpoint="alpha",
+            model="claude-opus-4-6",
+            redacted_key_id="aaaa1111",
+            schema_version=1,
+            code_version="fuzz",
+        )
+        c["status"] = "ok"
+        c["latency_ms"] = 100.0
+        c["payload"] = {
+            "score": 0.9,
+            "note": f"echoed key={sentinel}",
+            "raw_response": (
+                f"Authorization: Bearer {sentinel}; "
+                f"GET https://relay/api?api_key={sentinel}"
+            ),
+        }
+        rec["cells"].append(c)
+
+        err_cell = new_cell(
+            step="purity",
+            endpoint="alpha",
+            model="claude-opus-4-6",
+            redacted_key_id="aaaa1111",
+            schema_version=1,
+            code_version="fuzz",
+        )
+        err_cell["status"] = "error"
+        err_cell["latency_ms"] = 50.0
+        err_cell["error"] = {
+            "type": "RuntimeError",
+            "message": f"http 401, sent key {sentinel}",
+            "traceback": f"Traceback: leaked {sentinel}",
+        }
+        rec["cells"].append(err_cell)
+        return rec
+
+    def test_sentinel_does_not_leak_in_markdown(self):
+        from reporting.render_markdown import render
+
+        rec = self._polluted_record(SENTINEL)
+        out = render(rec, sentinel_keys=[SENTINEL])
+        assert SENTINEL not in out, "sentinel leaked in MD render"
+
+    def test_sentinel_does_not_leak_in_html(self):
+        from reporting.render_html import render
+
+        rec = self._polluted_record(SENTINEL)
+        out = render(rec, sentinel_keys=[SENTINEL])
+        assert SENTINEL not in out, "sentinel leaked in HTML render"
+
+    def test_sentinel_does_not_leak_in_diff_md(self):
+        from orchestration.baseline import compute_diff, render_diff_md
+
+        baseline = self._polluted_record(SENTINEL)
+        current = self._polluted_record(SENTINEL)
+        # Push the current run off baseline so the diff body has live cells.
+        current["cells"][0]["latency_ms"] = 1000.0
+        current["cells"][0]["payload"]["score"] = 0.5
+        diff = compute_diff(
+            current=current, baseline=baseline, sentinel_keys=[SENTINEL]
+        )
+        out = render_diff_md(diff)
+        assert SENTINEL not in out, "sentinel leaked in diff.md render"
+
+    @pytest.mark.parametrize(
+        "variant",
+        [
+            "SENTINEL-A-DO-NOT-LEAK-12345678",
+            "fuzz-key-abcdefghij1234567890ZZZZ",
+            "sk-fuzzABCDEFGHIJ1234567890ZZZZ",
+        ],
+    )
+    def test_variant_sentinels(self, variant):
+        """Vary the sentinel to catch hard-coded redactors in the S5-C surfaces."""
+        from orchestration.baseline import compute_diff, render_diff_md
+        from reporting.render_html import render as render_html
+        from reporting.render_markdown import render as render_md
+
+        rec = self._polluted_record(variant)
+        assert variant not in render_md(rec, sentinel_keys=[variant])
+        assert variant not in render_html(rec, sentinel_keys=[variant])
+
+        cur = self._polluted_record(variant)
+        cur["cells"][0]["latency_ms"] = 1000.0
+        diff = compute_diff(current=cur, baseline=rec, sentinel_keys=[variant])
+        assert variant not in render_diff_md(diff)
