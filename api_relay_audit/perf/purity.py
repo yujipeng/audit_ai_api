@@ -30,6 +30,18 @@ from typing import Iterable, Optional
 from api_relay_audit.identity_patterns import find_non_claude_identities
 
 
+__all__ = [
+    "SYSTEM_LEAK_PATTERNS",
+    "REFUSAL_PATTERNS",
+    "LEAKAGE_TOKENS",
+    "PurityRecord",
+    "PuritySummary",
+    "analyze_response",
+    "analyze_purity",
+    "_identity_anchored",
+]
+
+
 # -- Heuristic patterns ------------------------------------------------------
 
 SYSTEM_LEAK_PATTERNS = [
