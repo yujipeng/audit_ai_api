@@ -805,3 +805,175 @@ def test_models_diff_suspicious_alias_parity():
         assert modular(model_id) == standalone.is_suspicious_alias(model_id), (
             f"is_suspicious_alias({model_id!r}) drift between modular and standalone"
         )
+
+
+# ---------------------------------------------------------------------------
+# Story-5 (S1-probe-core / P4 rate-limit-fp) dual-distribution parity
+# ---------------------------------------------------------------------------
+
+
+def test_probe_rate_limit_section_present_in_standalone():
+    """Story-5 dual-distribution: standalone ``audit.py`` must inline
+    the rate-limit probe inside a ``# === probe rate-limit ===`` Section
+    block."""
+    text = (REPO_ROOT / "audit.py").read_text(encoding="utf-8")
+    start_marker = "# === probe rate-limit ===\n"
+    end_marker = "# === /probe rate-limit ===\n"
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    assert start != -1, (
+        "Missing '# === probe rate-limit ===' opening marker in audit.py"
+    )
+    assert end != -1, (
+        "Missing '# === /probe rate-limit ===' closing marker in audit.py"
+    )
+    section = text[start + len(start_marker):end]
+    for needle in (
+        "def probe_rate_limit(",
+        "def classify_compliance(",
+        "def parse_retry_after(",
+        '"openai"',
+        '"anthropic"',
+        '"absent"',
+        '"rate_limit:triggered_429"',
+        '"rate_limit:probe_disabled"',
+        "x-ratelimit-limit-requests",
+        "anthropic-ratelimit-requests-limit",
+    ):
+        assert needle in section, (
+            f"Standalone audit.py probe rate-limit Section missing {needle!r}; "
+            "dual-distribution invariant would diverge from "
+            "api_relay_audit/probe/rate_limit_fp.py."
+        )
+
+
+def test_probe_rate_limit_behavior_parity():
+    """Story-5 dual-distribution: both implementations must produce an
+    identical ``RateLimitResult`` shape on the same scripted inputs.
+
+    Spot-checks the three compliance buckets + the disabled-probe
+    short-circuit + the triggered_429 envelope detection.
+    """
+    from unittest.mock import MagicMock
+
+    from api_relay_audit.probe.rate_limit_fp import (
+        probe_rate_limit as modular_probe,
+    )
+
+    standalone = _load_standalone_audit()
+
+    def _resp(status, headers=None, body="", error=None):
+        return {
+            "status": status,
+            "headers": headers or {},
+            "body": body,
+            "error": error,
+        }
+
+    def _client(responses):
+        c = MagicMock()
+        c.api_key = "sk-test-deadbeef-deadbeef-1234567890abcdef"
+        c.raw_request = MagicMock(side_effect=list(responses))
+        return c
+
+    class _FakeClock:
+        def __init__(self):
+            self.current = 0.0
+
+        def now(self):
+            return self.current
+
+        def sleep(self, s):
+            self.current += float(s)
+
+    openai_headers = {"x-ratelimit-limit-requests": "60"}
+    anthropic_headers = {"anthropic-ratelimit-requests-limit": "50"}
+    openai_429_body = (
+        '{"error":{"message":"rate","type":"rate_limit_error","code":"rate_limit"}}'
+    )
+
+    scenarios = [
+        (
+            "compliance_openai_no_429",
+            [_resp(200, openai_headers)] * 16,
+            "openai", False, "absent",
+        ),
+        (
+            "compliance_anthropic_no_429",
+            [_resp(200, anthropic_headers)] * 16,
+            "anthropic", False, "absent",
+        ),
+        (
+            "compliance_absent_no_429",
+            [_resp(200, {"server": "nginx"})] * 16,
+            "absent", False, "absent",
+        ),
+        (
+            "baseline_429_openai_envelope",
+            [_resp(200, openai_headers)] * 4
+            + [_resp(429, {"retry-after": "30"}, body=openai_429_body)]
+            + [_resp(200, openai_headers)] * 11,
+            "openai", True, "openai-style",
+        ),
+    ]
+
+    for name, responses, want_compliance, want_triggered, want_envelope in scenarios:
+        mc = _client(responses)
+        sc = _client(responses)
+        mod_clock = _FakeClock()
+        std_clock = _FakeClock()
+
+        modular_r = modular_probe(
+            mc, enabled=True, sleep=mod_clock.sleep, now=mod_clock.now
+        )
+        standalone_r = standalone.probe_rate_limit(
+            sc, enabled=True, sleep=std_clock.sleep, now=std_clock.now
+        )
+
+        assert modular_r.compliance == standalone_r.compliance == want_compliance, (
+            f"{name}: compliance drift modular={modular_r.compliance!r} "
+            f"standalone={standalone_r.compliance!r} want={want_compliance!r}"
+        )
+        assert modular_r.triggered_429 == standalone_r.triggered_429 == want_triggered, (
+            f"{name}: triggered_429 drift modular={modular_r.triggered_429!r} "
+            f"standalone={standalone_r.triggered_429!r} want={want_triggered!r}"
+        )
+        assert modular_r.envelope_429 == standalone_r.envelope_429 == want_envelope, (
+            f"{name}: envelope_429 drift modular={modular_r.envelope_429!r} "
+            f"standalone={standalone_r.envelope_429!r} want={want_envelope!r}"
+        )
+        assert modular_r.signals == standalone_r.signals, (
+            f"{name}: signals drift modular={modular_r.signals!r} "
+            f"standalone={standalone_r.signals!r}"
+        )
+        assert modular_r.headers_seen == standalone_r.headers_seen, (
+            f"{name}: headers_seen drift modular={modular_r.headers_seen!r} "
+            f"standalone={standalone_r.headers_seen!r}"
+        )
+
+
+def test_probe_rate_limit_disabled_behavior_parity():
+    """Story-5 dual-distribution: ``enabled=False`` must skip ALL HTTP
+    calls in both distributions and yield identical structurally-flat
+    RateLimitResult payloads."""
+    from unittest.mock import MagicMock
+
+    from api_relay_audit.probe.rate_limit_fp import (
+        probe_rate_limit as modular_probe,
+    )
+
+    standalone = _load_standalone_audit()
+
+    def _client():
+        c = MagicMock()
+        c.api_key = "sk-test-deadbeef-deadbeef-1234567890abcdef"
+        c.raw_request = MagicMock(side_effect=AssertionError("must not be called"))
+        return c
+
+    modular_r = modular_probe(_client(), enabled=False)
+    standalone_r = standalone.probe_rate_limit(_client(), enabled=False)
+
+    assert modular_r.probe_disabled is standalone_r.probe_disabled is True
+    assert modular_r.compliance == standalone_r.compliance == "absent"
+    assert modular_r.signals == standalone_r.signals
+    assert modular_r.signals == ["rate_limit:probe_disabled"]

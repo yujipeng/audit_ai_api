@@ -2939,6 +2939,263 @@ def fetch_models_diff(client, vendor_hint="auto", models_ref_url=None):
 
 
 # ============================================================
+# Section 3e: probe-core / P4 rate-limit fingerprint (Story-5, S1 probe-core)
+# ============================================================
+#
+# Mirror of api_relay_audit/probe/rate_limit_fp.py. The block bracketed
+# by ``# === probe rate-limit ===`` / ``# === /probe rate-limit ===``
+# below is enforced by
+# tests/test_dual_distribution_parity.py::test_probe_rate_limit_section_present_in_standalone
+# and ::test_probe_rate_limit_behavior_parity. Mirror any signal-string,
+# header-name, classifier, or 429 short-circuit change into both files.
+
+# === probe rate-limit ===
+import json as _rl_json
+import time as _rl_time
+
+_RL_PATH = "/v1/chat/completions"
+_RL_TIMEOUT_S = 8
+_RL_MODEL = "gpt-4o-mini"
+
+_OPENAI_RL_HEADERS = frozenset({
+    "x-ratelimit-limit-requests",
+    "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-requests",
+    "x-ratelimit-remaining-tokens",
+    "x-ratelimit-reset-requests",
+    "x-ratelimit-reset-tokens",
+})
+_ANTHROPIC_RL_HEADERS = frozenset({
+    "anthropic-ratelimit-requests-limit",
+    "anthropic-ratelimit-requests-remaining",
+    "anthropic-ratelimit-requests-reset",
+    "anthropic-ratelimit-tokens-limit",
+    "anthropic-ratelimit-tokens-remaining",
+    "anthropic-ratelimit-tokens-reset",
+    "anthropic-ratelimit-input-tokens-limit",
+    "anthropic-ratelimit-input-tokens-remaining",
+    "anthropic-ratelimit-output-tokens-limit",
+    "anthropic-ratelimit-output-tokens-remaining",
+})
+
+
+def _rl_redact_error(error):
+    """Local copy of transparent_log.redact_error for the standalone."""
+    if error is None:
+        return None
+    for prefix in ("HTTP ", "curl failed"):
+        if error.startswith(prefix):
+            colon = error.find(":")
+            if colon != -1:
+                return error[:colon]
+            return error
+    return error
+
+
+def classify_compliance(headers_seen):
+    lowered = {str(h).lower() for h in headers_seen}
+    if lowered & _OPENAI_RL_HEADERS:
+        return "openai"
+    if lowered & _ANTHROPIC_RL_HEADERS:
+        return "anthropic"
+    return "absent"
+
+
+def parse_retry_after(value):
+    if value is None:
+        return "unknown"
+    s = str(value).strip()
+    if not s:
+        return "unknown"
+    if s.isdigit():
+        return "seconds"
+    upper = s.upper()
+    if "GMT" in upper or ":" in s:
+        return "http_date"
+    return "unknown"
+
+
+def _rl_detect_envelope(body):
+    if not body:
+        return "absent"
+    try:
+        data = _rl_json.loads(body)
+    except (ValueError, TypeError):
+        return "absent"
+    if not isinstance(data, dict):
+        return "absent"
+    if data.get("type") == "error" and isinstance(data.get("error"), dict):
+        return "anthropic-style"
+    err = data.get("error")
+    if isinstance(err, dict):
+        keys = set(err.keys())
+        if "message" in keys and (keys & {"type", "code"}):
+            return "openai-style"
+        return "non-standard"
+    if err is not None:
+        return "non-standard"
+    return "absent"
+
+
+def _rl_lower_headers(headers):
+    out = {}
+    if not headers:
+        return out
+    try:
+        items = headers.items()
+    except AttributeError:
+        return out
+    for k, v in items:
+        if isinstance(k, str):
+            out[k.lower()] = "" if v is None else str(v)
+    return out
+
+
+def _rl_extract_rpm(lower_headers):
+    for key in ("x-ratelimit-limit-requests", "anthropic-ratelimit-requests-limit"):
+        raw = lower_headers.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(str(raw).strip())
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _rl_make_body():
+    return _rl_json.dumps({
+        "model": _RL_MODEL,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "."}],
+    }).encode("utf-8")
+
+
+def probe_rate_limit(
+    client,
+    *,
+    enabled=True,
+    baseline=12,
+    burst=4,
+    min_gap_s=0.25,
+    sleep=_rl_time.sleep,
+    now=_rl_time.monotonic,
+):
+    if not enabled:
+        return RateLimitResult(
+            status="ok",
+            probe_disabled=True,
+            compliance="absent",
+            signals=["rate_limit:probe_disabled"],
+        )
+
+    api_key = getattr(client, "api_key", None) or ""
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    body = _rl_make_body()
+
+    headers_seen = set()
+    rpm_first = None
+    triggered_429 = False
+    samples_to_429 = None
+    envelope_429 = "absent"
+    retry_after_pattern = "unknown"
+    burst_window_s = None
+    transport_error_count = 0
+    first_transport_error = None
+    burst_start_t = None
+    burst_end_t = None
+
+    total_requests = baseline + burst
+    last_call_t = None
+
+    for idx in range(total_requests):
+        in_burst = idx >= baseline
+
+        if in_burst and last_call_t is not None:
+            elapsed = now() - last_call_t
+            if elapsed < min_gap_s:
+                sleep(max(0.0, min_gap_s - elapsed))
+
+        call_t = now()
+        if in_burst and burst_start_t is None:
+            burst_start_t = call_t
+
+        r = client.raw_request(
+            method="POST",
+            path=_RL_PATH,
+            headers=headers,
+            body=body,
+            content_type="application/json",
+            timeout=_RL_TIMEOUT_S,
+        )
+        last_call_t = now()
+        if in_burst:
+            burst_end_t = last_call_t
+
+        status = r.get("status", 0) or 0
+        if r.get("error"):
+            transport_error_count += 1
+            if first_transport_error is None:
+                first_transport_error = r.get("error")
+
+        lower = _rl_lower_headers(r.get("headers"))
+        for k in lower:
+            headers_seen.add(k)
+
+        if rpm_first is None:
+            rpm_first = _rl_extract_rpm(lower)
+
+        if status == 429:
+            triggered_429 = True
+            samples_to_429 = idx + 1
+            envelope_429 = _rl_detect_envelope(r.get("body") or "")
+            retry_after_pattern = parse_retry_after(lower.get("retry-after"))
+            break
+
+    if burst_start_t is not None and burst_end_t is not None:
+        burst_window_s = int(round(burst_end_t - burst_start_t))
+
+    compliance = classify_compliance(headers_seen)
+
+    signals = []
+    if triggered_429:
+        signals.append("rate_limit:triggered_429")
+    signals.append(f"rate_limit:compliance_{compliance}")
+    all_failed = transport_error_count >= total_requests
+    if all_failed:
+        signals.append("rate_limit:transport_error")
+
+    error = None
+    status_field = "ok"
+    if all_failed:
+        status_field = "error"
+        raw_msg = _rl_redact_error(str(first_transport_error)) or "transport_error"
+        if api_key and api_key in raw_msg:
+            raw_msg = raw_msg.replace(api_key, "<redacted>")
+        error = ProbeError(
+            code="transport_error:0",
+            message=raw_msg,
+        )
+
+    return RateLimitResult(
+        status=status_field,
+        rpm_observed=rpm_first,
+        headers_seen=sorted(headers_seen),
+        envelope_429=envelope_429,
+        retry_after_pattern=retry_after_pattern,
+        burst_window_s=burst_window_s,
+        triggered_429=triggered_429,
+        samples_to_429=samples_to_429,
+        compliance=compliance,
+        probe_disabled=False,
+        signals=signals,
+        error=error,
+    )
+
+# === /probe rate-limit ===
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 
