@@ -1,0 +1,43 @@
+{
+  "case_name": "normal_relay_listing",
+  "case_description": "A healthy relay endpoint that echoes the official top-tier OpenAI catalog cleanly. Used by tests/test_probe_models_diff.py to assert that ModelsDiffResult returns empty extra_in_relay / missing_in_relay / suspicious_aliases when the relay matches official.",
+  "catalog_version_observed": "2026-05-25",
+  "vendor_hint": "openai",
+  "mock_http_response": {
+    "status_code": 200,
+    "headers": {
+      "content-type": "application/json",
+      "server": "openai-relay/1.4.2"
+    },
+    "body": {
+      "object": "list",
+      "data": [
+        {"id": "gpt-5.5", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-5.5-codex", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-5.3-codex", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-5.2", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-5", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-5-mini", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-4o", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-4o-mini", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-4-turbo", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-4", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-3.5-turbo", "object": "model", "owned_by": "openai"},
+        {"id": "o1", "object": "model", "owned_by": "openai"},
+        {"id": "o1-mini", "object": "model", "owned_by": "openai"},
+        {"id": "o3", "object": "model", "owned_by": "openai"},
+        {"id": "o3-mini", "object": "model", "owned_by": "openai"},
+        {"id": "o4-mini", "object": "model", "owned_by": "openai"},
+        {"id": "text-embedding-3-large", "object": "model", "owned_by": "openai"},
+        {"id": "text-embedding-3-small", "object": "model", "owned_by": "openai"}
+      ]
+    }
+  },
+  "expected_diff": {
+    "extra_in_relay": [],
+    "missing_in_relay_top_priority": [],
+    "suspicious_aliases": [],
+    "verdict_for_p3": "pass",
+    "notes": "Relay subset is a valid subset of official catalog. Missing entries that are NOT in the relay's hint scope (e.g. version-pinned variants, deprecated models) should NOT be reported as missing_in_relay; only the 'top-priority' subset is enforced. Dev decides exact cutoff in models_diff.py."
+  }
+}

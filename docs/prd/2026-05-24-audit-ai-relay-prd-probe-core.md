@@ -11,9 +11,16 @@ reviewers: 资深产品经理 / 资深架构师 / 项目管理专家
 
 # PRD：S1 探测核心（probe-core）
 
-> 版本：v0.1（2026-05-24 初稿）
+> 版本：v0.2（2026-05-25 PM 收口：F5 退出码 freeze + F1 占位待项目负责人答复 + F2/F3 fixture 落盘）
 > 基线代码：master@6693aca（演进式增强，非新建）
 > 覆盖切片范围：endpoint 可达性 + auth 形态嗅探 + `/v1/models` 清单 diff + 限速指纹（**明确不含 perf**，归 S3）
+
+### 版本演进
+
+| 版本 | 日期 | 变更 |
+| --- | --- | --- |
+| v0.1 | 2026-05-24 | 初稿 |
+| v0.2 | 2026-05-25 | PJM 解锁 dispatch（TES-93 5/25 13:25 UTC）：（1）§10 退出码语义 freeze（F5）；（2）§7.2 Q2 重写为"待项目负责人答复"占位（F1）；（3）F2+F3 fixture 落盘至 `tests/fixtures/models_diff/`，§4.3 引用更新；本版本仍为 draft，v1.0 升版需等项目负责人对 F1 拍板。 |
 
 ---
 
@@ -186,7 +193,12 @@ api_relay_audit/
 
 ### 4.3 官方清单数据源（P3 关键决策）
 
-- **默认**：内置 JSON 静态快照 + 版本号（`references/official_models_*.json`），由 PJM 在合并前同步一次官方文档；版本号写入 ProbeReport 便于追溯
+- **默认**：内置 JSON 静态快照 + 版本号（`api_relay_audit/probe/references/official_models_*.json`，由 dev 在 Story-1 实现时从 `tests/fixtures/models_diff/official_*_catalog.json` 同步迁移），由 PJM 在合并前同步一次官方文档；版本号写入 ProbeReport 便于追溯
+- **PM 已交付的 CI fixture（v0.2）**：`tests/fixtures/models_diff/`（PJM TES-93 5/25 13:25 UTC 派单 F2 + F3）
+  - `official_openai_catalog.json` / `official_anthropic_catalog.json` / `official_gemini_catalog.json` — 81 个人工策展模型 ID，含 `catalog_version: 2026-05-25` 元数据
+  - `case_normal_relay_listing.json` / `case_inconsistent_relay_listing.json` — P3 三类 diff 单测 mock fixture
+  - `suspicious_alias_counterexamples.json` — 8 条 suspicious_alias 反例 + 正则种子（dev 据此实现 §3.1 P3 启发式）
+  - `README.md` — 文件清单 + provenance + dev 接入约定
 - **可覆盖**：`--models-ref-url <url>` 指向外部清单（如官方文档结构化镜像），允许用户使用更新版本
 - **不做**：自动爬官方文档（数据源不稳定，由 R3 风险登记防御）
 
@@ -264,7 +276,7 @@ api_relay_audit/
 ### 7.2 未决问题（开放给评审）
 
 - **Q1** 官方清单参考源是否需要内置脚本 `scripts/sync_official_models.py` 自动从厂商文档抓取？（M1：MVP 不做，靠人工同步；M2：考虑内置）
-- **Q2** P4 限速探针的"故意触发 4 次"是否需要项目负责人显式确认？（默认开启会在小份额 key 上吃掉额度）
+- **Q2** *(F1，2026-05-25 待项目负责人答复)* P4 限速探针默认 baseline：**12 + 4（推荐 / PRD 现状）** vs **仅 12（保守）** vs **默认关闭**。PM 已在父 issue [TES-93](mention://issue/c8ac1338-5392-4959-9f55-d64745167f4c) 评论 [8fb11605](mention://comment/8fb11605) 请示项目负责人，4h 软门后若未答复 PM 默认采用 12+4 并升 v1.0；事后可回滚。**v0.2 锁定结论**：当前 §3.4 / §5.1 C4 / §7.1 R2 一律按 12+4 推进，本 Q2 在项目负责人答复后由 PM 一次性升 v1.0 收口。
 - **Q3** ProbeReport 是否单独输出独立 HTML 卡片（`reports/probe-<ts>.html`），还是仅嵌入 audit 主报告？建议 MVP 嵌入 audit 主报告 + JSON 单独可获取，HTML 单独卡片放 S5 编排切片
 - **Q4** `--probe-only` 模式是否走独立 CLI 入口（如 `scripts/probe.py`），还是仅作 `audit.py` 的子模式？建议先走子模式（A2），独立入口由 S5 决定
 
@@ -291,13 +303,32 @@ api_relay_audit/
 
 ---
 
-## 10. 附录：CLI 行为表
+## 10. 附录：CLI 行为表（v0.2 freeze — F5 收口）
+
+> 来源：PJM TES-93 5/25 13:25 UTC 派单 F5「CLI 退出码语义 freeze 到 PRD §10 表」。本节为 **aggregator Story（[TES-154](mention://issue/da91a840-7bfa-4639-9e6e-fafc8cb3ff18)）实现的唯一退出码契约**，dev 不得自行扩展。
+
+### 10.1 命令矩阵
 
 | 命令 | 行为 | 退出码 |
 | --- | --- | --- |
-| `audit.py <url> <key> gpt`（默认） | probe-core + 13 步 | 0 / 2（probe fail） |
-| `audit.py <url> <key> gpt --probe-only` | 仅 probe-core，不跑 13 步 | 0 / 1（warn） / 2（fail） |
+| `audit.py <url> <key> gpt`（默认） | probe-core + 13 步 | **0**（probe pass/warn 都映射为 0，进入 13 步后沿用 13 步退出码） / **2**（probe fail，fail-fast 短路） |
+| `audit.py <url> <key> gpt --probe-only` | 仅 probe-core，不跑 13 步 | **0**（pass） / **1**（warn，**warn=1 仅本模式有意义**） / **2**（fail） |
 | `audit.py <url> <key> gpt --skip-probe` | 仅 13 步，与 master 一致 | 沿用 master 退出码 |
 | `audit.py <url> <key> gpt --no-rate-limit-probe` | 跳过 P4 | 同默认 |
 | `audit.py <url> <key> gpt --models-ref-url <url>` | P3 用外部参考清单 | 同默认 |
-| `audit.py <url> <key> gpt --no-fail-fast` | probe-core fail 不短路，继续 13 步 + 警告 | 沿用 13 步退出码 |
+| `audit.py <url> <key> gpt --no-fail-fast` | probe-core fail 不短路，继续 13 步 + 警告 | 沿用 13 步退出码（不会因 probe verdict=fail 而 exit 2） |
+
+### 10.2 退出码语义（freeze）
+
+| 码 | 含义 | 触发条件 | 出现场景 |
+| --- | --- | --- | --- |
+| **0** | 成功（含 warn 降级进入 13 步） | (a) 默认模式 probe verdict ∈ {pass, warn} 且 13 步全绿；或 (b) `--probe-only` 且 verdict=pass；或 (c) `--skip-probe` 走 master 路径成功 | 任意模式 |
+| **1** | warn — 仅 `--probe-only` 模式有意义 | `--probe-only` 且 probe verdict=warn（某探针 degraded，整体未失败） | **仅 `--probe-only` 模式产出**；默认模式下 verdict=warn 会进入 13 步并最终映射为 0，不产 exit 1 |
+| **2** | fail — probe 致命阻断 | (a) 默认模式 probe verdict=fail 触发 fail-fast 短路；或 (b) `--probe-only` 且 verdict=fail | 默认模式 + `--probe-only` 模式；`--no-fail-fast` 抑制默认模式 exit 2 |
+
+### 10.3 实现注意（aggregator dev 收口）
+
+- **R-F5.1** `--no-fail-fast` 优先级高于默认 fail-fast：即使 probe verdict=fail，`--no-fail-fast` 也不产 exit 2，而是把 13 步的退出码透传出去（PRD §3.3 已约束「fail → 短路退出 (exit code 2)」，本附录精化：短路在 fail-fast 启用时才发生）
+- **R-F5.2** `--skip-probe` 路径完全绕开 probe-core，退出码语义与 master@6693aca 完全一致（A13 验收）
+- **R-F5.3** exit 1（warn）**仅** 出现在 `--probe-only` 模式。默认模式下 verdict=warn 由 reporter 在主报告头部插警告条（PRD §3.3），exit 仍为 0
+- **R-F5.4** dev 不得引入 exit code 3 / 4 / 其他自定义码；如需新增（如 "用户主动取消" 等），需先在本表加行 + 走 PRD 升版评审，不得绕过

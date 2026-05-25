@@ -1,0 +1,74 @@
+{
+  "case_name": "inconsistent_relay_listing",
+  "case_description": "A non-compliant relay endpoint that (a) advertises models that don't exist in any official catalog (extra_in_relay + suspicious_aliases) and (b) omits flagship official models the user expects (missing_in_relay). Used by tests/test_probe_models_diff.py to assert all three diff classes fire correctly.",
+  "catalog_version_observed": "2026-05-25",
+  "vendor_hint": "auto",
+  "mock_http_response": {
+    "status_code": 200,
+    "headers": {
+      "content-type": "application/json",
+      "server": "new-api/0.7.4-fork"
+    },
+    "body": {
+      "object": "list",
+      "data": [
+        {"id": "gpt-4o", "object": "model", "owned_by": "openai-relay"},
+        {"id": "gpt-3.5-turbo", "object": "model", "owned_by": "openai-relay"},
+        {"id": "gpt-5-pro", "object": "model", "owned_by": "openai-relay"},
+        {"id": "gpt-5-ultra", "object": "model", "owned_by": "openai-relay"},
+        {"id": "gpt-4o-turbo-max", "object": "model", "owned_by": "openai-relay"},
+        {"id": "claude-3-mini", "object": "model", "owned_by": "anthropic-relay"},
+        {"id": "claude-4-flash", "object": "model", "owned_by": "anthropic-relay"},
+        {"id": "claude-opus-5", "object": "model", "owned_by": "anthropic-relay"},
+        {"id": "gemini-pro", "object": "model", "owned_by": "google-relay"},
+        {"id": "gemini-3.0-ultra", "object": "model", "owned_by": "google-relay"},
+        {"id": "gemini-pro-max", "object": "model", "owned_by": "google-relay"},
+        {"id": "internal-router-001", "object": "model", "owned_by": "relay-internal"},
+        {"id": "auto", "object": "model", "owned_by": "relay-internal"}
+      ]
+    }
+  },
+  "expected_diff": {
+    "extra_in_relay": [
+      "gpt-5-pro",
+      "gpt-5-ultra",
+      "gpt-4o-turbo-max",
+      "claude-3-mini",
+      "claude-4-flash",
+      "claude-opus-5",
+      "gemini-3.0-ultra",
+      "gemini-pro-max",
+      "internal-router-001",
+      "auto"
+    ],
+    "missing_in_relay_top_priority_openai": [
+      "gpt-5.5",
+      "gpt-5.2",
+      "o1",
+      "o3"
+    ],
+    "missing_in_relay_top_priority_anthropic": [
+      "claude-opus-4-7",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5"
+    ],
+    "missing_in_relay_top_priority_gemini": [
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+      "gemini-2.0-flash"
+    ],
+    "suspicious_aliases": [
+      "gpt-5-pro",
+      "gpt-5-ultra",
+      "gpt-4o-turbo-max",
+      "claude-3-mini",
+      "claude-4-flash",
+      "claude-opus-5",
+      "gemini-3.0-ultra",
+      "gemini-pro-max"
+    ],
+    "verdict_for_p3": "fail",
+    "verdict_reason": "8 suspicious aliases + 10 extras + missing all 3 flagships per vendor; this relay is almost certainly performing model-name laundering. P3 should flag verdict=fail and aggregator should propagate to ProbeReport.verdict=fail (PRD §3.3).",
+    "notes": "Some entries are BOTH extra_in_relay AND suspicious_aliases — that is correct: suspicious_aliases is a heuristic-derived subset of extra_in_relay that matches known tier-confusion patterns. Internal-router IDs ('internal-router-001', 'auto') are extra_in_relay but NOT suspicious_aliases — they are relay-control plumbing, not model-name laundering."
+  }
+}
