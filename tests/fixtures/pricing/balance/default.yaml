@@ -1,0 +1,52 @@
+# Default L2 balance-triangle fixture (TES-136 / S4-C DoD bullet 3).
+#
+# Schema (also acts as the reference contract for SampleBalanceAdapter
+# inputs and for TestFixtureInvariants):
+#
+#   - id:                short stable identifier per row
+#     vendor:            "anthropic" | "openai-compatible" | ...
+#     model:             concrete model id
+#     base_url:          relay base URL (or vendor canonical for direct)
+#     billing_endpoint:  bool — does the relay expose /v1/billing
+#     reported_cost_usd: relay-claimed cost (USD) for the call
+#     balance_before_usd / balance_after_usd: observed balance USD
+#     balance_drift_pct: |actual_outflow - claimed_cost| / claimed_cost * 100
+#     notes:             free-form provenance / why this row exists
+#
+# DoD invariants enforced by tests/test_pricing_l2_evaluator.py:
+#   * ≥ 2 distinct vendor entries
+#   * ≥ 1 row with balance_drift_pct ≠ 0 (flags balance_drift_high)
+#   * ≥ 1 row exposing /billing (1 hvoy 5/12 OAI-compatible relay anchor)
+#
+# The Anthropic direct row is the pricing-math anchor: Anthropic does not
+# expose a public /billing endpoint, so we drive its adapter via observed
+# before/after balance fields instead — see SampleBalanceAdapter.
+
+rows:
+  - id: anthropic-direct-honest
+    vendor: anthropic
+    model: claude-haiku-4-5
+    base_url: https://api.anthropic.com
+    billing_endpoint: false
+    reported_cost_usd: 0.10
+    balance_before_usd: 10.00
+    balance_after_usd: 9.90
+    balance_drift_pct: 0.0
+    notes: >-
+      Anthropic direct anchor — claim and outflow agree exactly. Used by
+      TestFixtureInvariants and as the compliance baseline for the L2
+      evaluator regression suite.
+
+  - id: oai-relay-balance-drift-high
+    vendor: openai-compatible
+    model: gpt-4o-mini
+    base_url: https://hvoy-sample-relay.test
+    billing_endpoint: true
+    reported_cost_usd: 1.00
+    balance_before_usd: 10.00
+    balance_after_usd: 8.70
+    balance_drift_pct: 30.0
+    notes: >-
+      Headline DoD scenario — claim $1.00 but balance dropped $1.30.
+      Stand-in for one of the 5/12 hvoy.ai-surveyed OAI-compatible relays
+      that expose /v1/billing. Drives the balance_drift_high regression.
