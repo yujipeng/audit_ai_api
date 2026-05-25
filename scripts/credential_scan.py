@@ -29,6 +29,10 @@ ALLOWLIST = {
     "tests/test_redact_patterns.py",
     "tests/test_secrets_loader.py",
     "tests/test_credential_isolation.py",
+    "tests/test_credential_isolation_orchestrator.py",
+    "tests/test_orchestration_config.py",
+    "tests/test_orchestration_runner.py",
+    "tests/test_step_adapters.py",
     # The error-leakage detector tests intentionally embed leaked-credential
     # fixtures (the file is the corpus for testing how relays leak keys).
     "tests/test_error_leakage.py",
