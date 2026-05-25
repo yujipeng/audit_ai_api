@@ -135,6 +135,11 @@ def _run_one_cell(
         step=step,
         endpoint=endpoint,
         model=model,
+        # Run-level params (cfg.run, e.g. global `mock`, `concurrency`) deliberately
+        # override step-level params: a global toggle should not be silently
+        # masked by a per-step default. S1~S4 step adapters that need a
+        # per-step override must read it explicitly from `prior_results` or
+        # config, not from `run_params`.
         run_params={**(step_params or {}), **vars(cfg.run)},
         prior_results=prior_results,
     )

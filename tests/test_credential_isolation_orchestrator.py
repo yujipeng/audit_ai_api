@@ -65,6 +65,20 @@ def _adapter_factory(mode: str):
                 },
                 "schema_version": 1, "code_version": "test",
             }
+        if mode == "leak_list_of_dict":
+            return {
+                "step": ctx.step, "endpoint": ctx.endpoint.name, "model": ctx.model,
+                "status": "ok", "latency_ms": 1.0,
+                "payload": {
+                    "results": [
+                        {"echoed": f"key {SENTINEL}"},
+                        {"nested": {"deeper": SENTINEL}},
+                        {"deeper_list": [{"x": SENTINEL}]},
+                        [f"raw {SENTINEL}"],
+                    ],
+                },
+                "schema_version": 1, "code_version": "test",
+            }
         return {
             "step": ctx.step, "endpoint": ctx.endpoint.name, "model": ctx.model,
             "status": "ok", "latency_ms": 1.0,
@@ -121,6 +135,38 @@ def test_payload_redaction_scrubs_misbehaving_adapter(tmp_path: Path):
     cell = rec["cells"][0]
     _assert_sentinel_absent(json.dumps(cell["payload"]), ctx="payload (in-memory)")
     _assert_sentinel_absent(out.read_text(encoding="utf-8"), ctx="run-record.json (disk)")
+
+
+# ---- B1 regression: list-of-dict-of-secret must also be scrubbed ---------
+
+def test_payload_redaction_scrubs_list_of_dict_of_secret(tmp_path: Path):
+    """B1 regression — `_redact_payload` must recurse into dicts and lists
+    nested inside list elements, not just top-level dict/list-of-str."""
+    out = tmp_path / "run-record.json"
+    rec = run_matrix(
+        _cfg(),
+        adapters={"probe": _adapter_factory("leak_list_of_dict")},
+        writer=RunRecordWriter(out),
+    )
+    cell = rec["cells"][0]
+    _assert_sentinel_absent(json.dumps(cell["payload"]), ctx="payload list-of-dict (mem)")
+    _assert_sentinel_absent(out.read_text(encoding="utf-8"),
+                            ctx="run-record.json list-of-dict (disk)")
+
+
+def test_redact_payload_recurses_through_arbitrary_nesting():
+    """Direct unit test of `_redact_payload` for list/dict/list-of-list paths."""
+    from orchestration.steps import _redact_payload
+
+    payload = {
+        "list_of_dict": [{"echo": f"k {SENTINEL}"}],
+        "list_of_list_of_str": [[f"raw {SENTINEL}"]],
+        "list_of_dict_of_list_of_str": [{"inner": [SENTINEL]}],
+        "dict_of_list_of_dict": {"x": [{"y": SENTINEL}]},
+    }
+    cleaned = _redact_payload(payload, sentinel_keys=())
+    blob = json.dumps(cleaned)
+    _assert_sentinel_absent(blob, ctx="_redact_payload recursive output")
 
 
 # ---- cache also gets the redacted version, not raw payload ----------------

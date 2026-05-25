@@ -112,25 +112,30 @@ def _result_skeleton(ctx: StepContext, *, schema_version: int, code_version: str
     }
 
 
+def _redact_value(v: Any, sentinel_keys: tuple[str, ...]) -> Any:
+    if isinstance(v, str):
+        return redact_text(v)
+    if isinstance(v, dict):
+        return _redact_payload(v, sentinel_keys)
+    if isinstance(v, list):
+        return [_redact_value(x, sentinel_keys) for x in v]
+    if isinstance(v, tuple):
+        return tuple(_redact_value(x, sentinel_keys) for x in v)
+    return v
+
+
 def _redact_payload(payload: Dict[str, Any], sentinel_keys: tuple[str, ...]) -> Dict[str, Any]:
-    """Belt-and-suspenders: run any string-valued field through redact_text.
+    """Belt-and-suspenders: recursively run any string-valued field through redact_text.
 
     Per the handshake contract, well-behaved adapters never put credentials
     in `payload`. But the orchestrator runs this anyway because (a) it costs
     nothing and (b) future adapter dev hands belong to S1/S2/S3/S4 dev who
     may not internalise the contract — defense in depth wins.
+
+    Recurses through dict / list / tuple / list-of-dict / list-of-list etc.
+    so a credential cannot hide behind arbitrary nesting (B1 regression).
     """
-    cleaned: Dict[str, Any] = {}
-    for k, v in payload.items():
-        if isinstance(v, str):
-            cleaned[k] = redact_text(v)
-        elif isinstance(v, dict):
-            cleaned[k] = _redact_payload(v, sentinel_keys)
-        elif isinstance(v, list):
-            cleaned[k] = [redact_text(x) if isinstance(x, str) else x for x in v]
-        else:
-            cleaned[k] = v
-    return cleaned
+    return {k: _redact_value(v, sentinel_keys) for k, v in payload.items()}
 
 
 # ---- The four step adapter shells -----------------------------------------

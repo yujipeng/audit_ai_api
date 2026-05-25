@@ -95,10 +95,10 @@ def _do_dry_run(cfg, cache: Cache) -> int:
     print(f"  cache disabled:   {cache.disabled}")
     print()
     print("matrix:")
-    for step, base_url, model, sv, cv, _params in cells:
+    for step, base_url, model, sv, cv, params in cells:
         key = compute_cache_key(
             step=step, base_url=base_url, model=model,
-            schema_version=sv, code_version=cv, params=cells[0][5],
+            schema_version=sv, code_version=cv, params=params,
         )
         print(f"  step={step:8s} base_url={base_url:<40s} model={model:<24s} key={key[:12]}...")
     return 0
