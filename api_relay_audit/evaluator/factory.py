@@ -1,21 +1,25 @@
 """Factory — explicit pipeline assembly.
 
 S2-1 用 NoOp 占位整张 pipeline；S2-2 / S2-3 起逐一替换为真实 wrapper。
-本片：S2-3 已替 web3 占位为 ``Web3InjectionEvaluator``；其余 6 维仍为 NoOp（S2-2 接管）。
+S2-2 装载 6 个真实 wrapper（injection/swap/drift/tool/refusal/leak）；
+S2-3 装载 web3 维度的 ``Web3InjectionEvaluator``。本片合并后 pipeline
+内 7 维全部为真实 wrapper，``_NoOpEvaluator`` 类保留供未来新维度临时占位。
 """
 from __future__ import annotations
 
 from .base import DimensionId, Evaluator, EvaluatorResult, ProbeContext
+from .dimensions.drift import DriftEvaluator
+from .dimensions.injection import InjectionEvaluator
+from .dimensions.leak import LeakEvaluator
+from .dimensions.refusal import RefusalEvaluator
+from .dimensions.swap import SwapEvaluator
+from .dimensions.tool import ToolEvaluator
 from .dimensions.web3_injection import Web3InjectionEvaluator
 from .pipeline import EvaluatorPipeline
 
 
 class _NoOpEvaluator(Evaluator):
-    """Placeholder evaluator: returns verdict='unknown' with reason 'not implemented'.
-
-    S2-2/3/4/5 各自替换对应 dimension 的 wrapper 后，本类不再被引用。
-    选择 verdict='unknown' 而非 'clean'：避免在 wrapper 未上线前给出虚假 clean 结论。
-    """
+    """Placeholder evaluator (kept for web3_injection until S2-3)."""
 
     def __init__(self, dimension: DimensionId, default_in_profile: bool = True):
         self.dimension = dimension
@@ -25,7 +29,7 @@ class _NoOpEvaluator(Evaluator):
         return EvaluatorResult(
             dimension=self.dimension,
             verdict="unknown",
-            verdict_reason=f"{self.dimension} evaluator not yet implemented (S2-1 skeleton)",
+            verdict_reason=f"{self.dimension} evaluator not yet implemented",
             rounds_total=ctx.rounds,
             rounds_ok=0,
             hits=[],
@@ -37,12 +41,12 @@ def default_purity_pipeline() -> EvaluatorPipeline:
     """Build the default pipeline with all dimensions registered."""
     return EvaluatorPipeline(
         [
-            _NoOpEvaluator("injection"),
-            _NoOpEvaluator("swap"),
-            _NoOpEvaluator("drift"),
-            _NoOpEvaluator("tool"),
-            _NoOpEvaluator("refusal"),
-            _NoOpEvaluator("leak"),
+            InjectionEvaluator(),
+            SwapEvaluator(),
+            DriftEvaluator(),
+            ToolEvaluator(),
+            RefusalEvaluator(),
+            LeakEvaluator(),
             Web3InjectionEvaluator(),
         ]
     )
