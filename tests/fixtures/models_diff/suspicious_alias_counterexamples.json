@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "catalog_version": "2026-05-25",
+  "purpose": "Hand-picked suspicious-alias counter-examples and regex hints for the heuristic in probe/models_diff.py (PRD §3.1 P3 / §6.2 A6). Each entry includes (a) the bogus model ID, (b) the official vendor it impersonates, (c) the reason it is suspicious, and (d) a regex hint dev can use to seed the detection. Dev decides final regex shape — these are SEEDS not a closed rule set.",
+  "review_boundary": "PM curates initial 8 patterns; dev may extend in models_diff.py and MUST add new ones back to this fixture so test coverage stays in sync.",
+  "counterexamples": [
+    {
+      "model_id": "gpt-5-pro",
+      "impersonates_vendor": "openai",
+      "reason": "OpenAI GPT-5 product line has mini / standard / flagship tiers — no 'pro' tier exists. 'pro' is Google Gemini terminology bleeding into the GPT namespace.",
+      "regex_hint": "^gpt-5-(pro|ultra|plus)$",
+      "diff_class": "tier_confusion_cross_vendor"
+    },
+    {
+      "model_id": "gpt-5-ultra",
+      "impersonates_vendor": "openai",
+      "reason": "'ultra' is a Gemini tier, never used in OpenAI naming. Often paired with bogus 'pro' to look enterprise-flagship.",
+      "regex_hint": "^gpt-\\d+(\\.\\d+)?-(ultra|max)$",
+      "diff_class": "tier_confusion_cross_vendor"
+    },
+    {
+      "model_id": "gpt-4o-turbo-max",
+      "impersonates_vendor": "openai",
+      "reason": "Stacks two tier suffixes ('turbo' + 'max') — OpenAI never combines tier modifiers. Classic relay laundering pattern from CISPA arXiv:2603.01919.",
+      "regex_hint": "-(turbo-max|max-turbo|turbo-plus|plus-turbo|pro-max)$",
+      "diff_class": "stacked_tier_suffix"
+    },
+    {
+      "model_id": "claude-3-mini",
+      "impersonates_vendor": "anthropic",
+      "reason": "Anthropic uses haiku / sonnet / opus tier naming, NEVER 'mini'. 'mini' is OpenAI terminology bleeding in.",
+      "regex_hint": "^claude-\\d+(-\\d+)?-(mini|nano|micro)$",
+      "diff_class": "tier_confusion_cross_vendor"
+    },
+    {
+      "model_id": "claude-4-flash",
+      "impersonates_vendor": "anthropic",
+      "reason": "'flash' is Gemini tier terminology. Anthropic uses haiku for the fast tier.",
+      "regex_hint": "^claude-\\d+(-\\d+)?-(flash|turbo)$",
+      "diff_class": "tier_confusion_cross_vendor"
+    },
+    {
+      "model_id": "claude-opus-5",
+      "impersonates_vendor": "anthropic",
+      "reason": "As of 2026-05 Anthropic flagship is claude-opus-4-7 (per official catalog + perf/runner.py:VENDOR_MODELS['claude']). 'opus-5' is forward-faked.",
+      "regex_hint": "^claude-(opus|sonnet|haiku)-(?!4-|3-|2-|1-)\\d+$",
+      "diff_class": "version_forward_fake"
+    },
+    {
+      "model_id": "gemini-3.0-ultra",
+      "impersonates_vendor": "gemini",
+      "reason": "Google has not released a 3.0 line as of 2026-05 (latest is 2.5-pro). Major-version forward-faking.",
+      "regex_hint": "^gemini-(?!2\\.|1\\.|1\\.5|2\\.5|2\\.0|1\\.0)\\d+\\.\\d+",
+      "diff_class": "version_forward_fake"
+    },
+    {
+      "model_id": "gemini-pro-max",
+      "impersonates_vendor": "gemini",
+      "reason": "Stacked tier ('pro' + 'max'). Gemini uses single-tier names (pro, flash, ultra).",
+      "regex_hint": "^gemini-(pro-max|pro-plus|flash-max|flash-pro)$",
+      "diff_class": "stacked_tier_suffix"
+    }
+  ],
+  "diff_class_taxonomy": {
+    "tier_confusion_cross_vendor": "Model ID borrows tier vocabulary from a different vendor (e.g. 'pro' on GPT, 'flash' on Claude). High-confidence laundering signal.",
+    "stacked_tier_suffix": "Two tier modifiers stacked in one name ('-turbo-max', '-pro-plus'). No vendor ships these.",
+    "version_forward_fake": "Major version that does not exist yet for that vendor as of catalog_version. Confidence depends on how close to bleeding edge."
+  },
+  "negative_examples_that_are_NOT_suspicious": [
+    "gpt-4o (real OpenAI flagship as of 2024)",
+    "claude-3-5-sonnet-20241022 (legit version-pinned Anthropic ID)",
+    "gemini-2.5-flash (legit Gemini fast tier)",
+    "internal-router-001 (relay-internal plumbing — flagged as extra_in_relay but NOT suspicious_aliases; see case_inconsistent expected_diff.notes)"
+  ]
+}
