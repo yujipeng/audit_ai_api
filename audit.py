@@ -2260,6 +2260,219 @@ class ProbeReport:
 
 
 # ============================================================
+# Section 3b: probe-core P1 reachability (Story-2, S1 probe-core)
+# ============================================================
+#
+# Mirror of api_relay_audit/probe/reachability.py. The block bracketed
+# by ``# === probe.reachability ===`` / ``# === /probe.reachability ===``
+# markers below is enforced by
+# tests/test_dual_distribution_parity.py::test_probe_reachability_section_present_in_standalone
+# and ::test_probe_reachability_branch_parity. Mirror any signal-string
+# / error-code / status-mapping change into both files.
+#
+# Standalone vs modular transport difference: the modular side uses
+# ``httpx`` first and falls back to ``curl -sk`` on SSL errors. The
+# standalone is curl-only, so it tries ``curl`` (strict verify) first
+# and falls back to ``curl -sk`` on SSL errors. Both emit the
+# ``reachability:via-curl`` signal when the unverified-TLS path was
+# taken, which is the semantic the aggregator (Story-6) cares about.
+
+# === probe.reachability ===
+import socket as _probe_socket
+import subprocess as _probe_subprocess
+import time as _probe_time
+from urllib.parse import urlparse as _probe_urlparse
+
+
+def _probe_resolve_host(host):
+    _probe_socket.getaddrinfo(host, None)
+    return True
+
+
+def _probe_curl_get_root(url, timeout, insecure):
+    cmd = ["curl"]
+    if insecure:
+        cmd.append("-sk")
+    else:
+        cmd.append("-s")
+    cmd.extend([
+        "-o", "/dev/null",
+        "-w", "%{http_code}",
+        "--max-time", str(int(timeout) + 1),
+        url,
+    ])
+    r = _probe_subprocess.run(
+        cmd, capture_output=True, text=True, timeout=timeout + 5
+    )
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"curl failed (rc={r.returncode}): {r.stderr[:200]}"
+        )
+    try:
+        code = int(r.stdout.strip())
+    except (TypeError, ValueError):
+        raise RuntimeError(f"curl returned non-integer status: {r.stdout!r}")
+
+    class _CurlResponse:
+        status_code = code
+
+    return _CurlResponse()
+
+
+def _probe_root_url(base_url):
+    try:
+        parsed = _probe_urlparse(base_url)
+    except ValueError:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _probe_looks_like_ssl_error(exc):
+    msg = str(exc).lower()
+    return any(tok in msg for tok in ("ssl", "certificate", "handshake", "tls"))
+
+
+def _probe_classify_http_response(status_code, latency_ms, fallback_to_curl):
+    signals = []
+    if fallback_to_curl:
+        signals.append("reachability:via-curl")
+    if 200 <= status_code < 400:
+        return ReachabilityResult(
+            status="degraded" if fallback_to_curl else "ok",
+            dns_resolves=True,
+            tcp_ok=True,
+            tls_ok=not fallback_to_curl,
+            http_status_root=status_code,
+            latency_ms=latency_ms,
+            fallback_to_curl=fallback_to_curl,
+            signals=signals,
+            error=None,
+        )
+    if 400 <= status_code < 500:
+        signals.append("reachability:http-4xx")
+        return ReachabilityResult(
+            status="degraded",
+            dns_resolves=True,
+            tcp_ok=True,
+            tls_ok=not fallback_to_curl,
+            http_status_root=status_code,
+            latency_ms=latency_ms,
+            fallback_to_curl=fallback_to_curl,
+            signals=signals,
+            error=None,
+        )
+    signals.append("reachability:http-5xx")
+    return ReachabilityResult(
+        status="error",
+        dns_resolves=True,
+        tcp_ok=True,
+        tls_ok=not fallback_to_curl,
+        http_status_root=status_code,
+        latency_ms=latency_ms,
+        fallback_to_curl=fallback_to_curl,
+        signals=signals,
+        error=ProbeError(
+            code="http_5xx",
+            message=f"HTTP {status_code} from root URL",
+        ),
+    )
+
+
+def probe_reachability(base_url, timeout_s=8.0):
+    root = _probe_root_url(base_url)
+    if root is None:
+        return ReachabilityResult(
+            status="error",
+            signals=["reachability:invalid-base-url"],
+            error=ProbeError(
+                code="invalid_base_url",
+                message=f"base_url is not a parseable http(s) URL: {base_url!r}",
+            ),
+        )
+    parsed = _probe_urlparse(root)
+    host = parsed.hostname or ""
+    try:
+        _probe_resolve_host(host)
+    except _probe_socket.gaierror as exc:
+        return ReachabilityResult(
+            status="error",
+            dns_resolves=False,
+            signals=["reachability:dns-failed"],
+            error=ProbeError(
+                code="dns_resolution_failed",
+                message=f"DNS lookup failed for {host}: {exc}",
+            ),
+        )
+    t0 = _probe_time.perf_counter()
+    try:
+        response = _probe_curl_get_root(root, timeout=timeout_s, insecure=False)
+        elapsed_ms = int((_probe_time.perf_counter() - t0) * 1000)
+        return _probe_classify_http_response(
+            response.status_code,
+            latency_ms=elapsed_ms,
+            fallback_to_curl=False,
+        )
+    except _probe_subprocess.TimeoutExpired as exc:
+        return ReachabilityResult(
+            status="error",
+            dns_resolves=True,
+            tcp_ok=False,
+            tls_ok=False,
+            signals=["reachability:timeout"],
+            error=ProbeError(
+                code="timeout",
+                message=f"curl timeout after {timeout_s}s: {exc}",
+            ),
+        )
+    except (RuntimeError, OSError) as exc:
+        if not _probe_looks_like_ssl_error(exc):
+            return ReachabilityResult(
+                status="error",
+                dns_resolves=True,
+                tcp_ok=False,
+                tls_ok=False,
+                signals=["reachability:tcp-refused"],
+                error=ProbeError(
+                    code="tcp_refused",
+                    message=f"TCP connect failed: {exc}",
+                ),
+            )
+        # SSL-flavoured error → retry with curl -sk insecure
+        t0 = _probe_time.perf_counter()
+        try:
+            response = _probe_curl_get_root(root, timeout=timeout_s, insecure=True)
+            elapsed_ms = int((_probe_time.perf_counter() - t0) * 1000)
+            return _probe_classify_http_response(
+                response.status_code,
+                latency_ms=elapsed_ms,
+                fallback_to_curl=True,
+            )
+        except (RuntimeError, _probe_subprocess.TimeoutExpired, OSError) as curl_exc:
+            return ReachabilityResult(
+                status="error",
+                dns_resolves=True,
+                tcp_ok=True,
+                tls_ok=False,
+                fallback_to_curl=True,
+                signals=["reachability:tls-failed"],
+                error=ProbeError(
+                    code="tls_handshake_failed",
+                    message=(
+                        f"curl strict SSL error ({exc}); "
+                        f"curl -sk recovery also failed: {curl_exc}"
+                    ),
+                ),
+            )
+
+
+# === /probe.reachability ===
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 

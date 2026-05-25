@@ -380,6 +380,196 @@ def test_probe_dataclass_fields_parity():
         )
 
 
+# ---------------------------------------------------------------------------
+# Story-2 (S1-probe-core/reachability) probe.reachability Section parity
+# ---------------------------------------------------------------------------
+
+
+def _extract_probe_reachability_section(path: Path) -> str:
+    """Slice the ``# === probe.reachability ===`` block from a file."""
+    text = path.read_text(encoding="utf-8")
+    start_marker = "# === probe.reachability ===\n"
+    end_marker = "# === /probe.reachability ===\n"
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    if start == -1:
+        raise AssertionError(
+            f"Could not find '# === probe.reachability ===' opening marker in {path}"
+        )
+    if end == -1:
+        raise AssertionError(
+            f"Could not find '# === /probe.reachability ===' closing marker in {path}"
+        )
+    return text[start + len(start_marker):end]
+
+
+def test_probe_reachability_section_present_in_standalone():
+    """Story-2 dual-distribution: standalone ``audit.py`` must inline a
+    ``probe_reachability`` implementation inside a ``# === probe.reachability ===``
+    Section block (character-checked sentinels).
+    """
+    section = _extract_probe_reachability_section(REPO_ROOT / "audit.py")
+    for needle in (
+        "def probe_reachability(",
+        '"reachability:via-curl"',
+        '"reachability:dns-failed"',
+        '"reachability:tcp-refused"',
+        '"reachability:tls-failed"',
+        '"reachability:http-4xx"',
+        '"reachability:http-5xx"',
+        '"reachability:timeout"',
+        '"reachability:invalid-base-url"',
+        '"dns_resolution_failed"',
+        '"tcp_refused"',
+        '"tls_handshake_failed"',
+        '"http_5xx"',
+        '"invalid_base_url"',
+        '"timeout"',
+    ):
+        assert needle in section, (
+            f"Standalone audit.py probe.reachability Section block missing {needle!r}; "
+            "dual-distribution invariant would diverge from "
+            "api_relay_audit/probe/reachability.py."
+        )
+
+
+def test_probe_reachability_branch_parity(monkeypatch):
+    """Story-2 (TES-150) functional parity: the standalone and modular
+    ``probe_reachability`` implementations MUST return identical
+    (status, error.code or None, sorted-signals, fallback_to_curl)
+    tuples on the six PRD §6.2 A4 mock branches plus the curl-fallback
+    recovery branch.
+
+    The transports differ (httpx vs curl-strict) so we monkeypatch each
+    side's network seam to identical synthetic outcomes, then assert the
+    classification layer is character-equivalent. We use ``monkeypatch``
+    explicitly so attribute restoration happens at teardown — direct
+    assignment would leak seams into subsequent test modules.
+    """
+    import socket as _socket
+    import httpx as _httpx
+
+    from api_relay_audit.probe import reachability as modular_p1
+
+    standalone = _load_standalone_audit()
+
+    def _summary(result):
+        return (
+            result.status,
+            (result.error.code if result.error is not None else None),
+            tuple(sorted(result.signals)),
+            result.fallback_to_curl,
+            result.http_status_root,
+        )
+
+    class _FakeResp:
+        def __init__(self, code):
+            self.status_code = code
+
+    def _run_branch(name, dns_fn, modular_first, standalone_first, recovery_code):
+        # Reset seams via monkeypatch so they get restored at teardown.
+        monkeypatch.setattr(modular_p1, "_resolve_host", dns_fn)
+        monkeypatch.setattr(standalone, "_probe_resolve_host", dns_fn)
+
+        if name == "dns_fail":
+            modular_result = modular_p1.probe_reachability(
+                "https://no-such-host.invalid/v1", timeout_s=1
+            )
+            standalone_result = standalone.probe_reachability(
+                "https://no-such-host.invalid/v1", timeout_s=1
+            )
+        elif name == "curl_fallback_recovery":
+            def _modular_httpx(url, timeout):
+                raise modular_first
+
+            def _modular_curl(url, timeout):
+                return _FakeResp(recovery_code)
+
+            monkeypatch.setattr(modular_p1, "_httpx_get_root", _modular_httpx)
+            monkeypatch.setattr(modular_p1, "_curl_get_root", _modular_curl)
+            modular_result = modular_p1.probe_reachability(
+                "https://relay.example/v1", timeout_s=1
+            )
+
+            def _standalone_curl(url, timeout, insecure):
+                if not insecure:
+                    raise standalone_first
+                return _FakeResp(recovery_code)
+
+            monkeypatch.setattr(standalone, "_probe_curl_get_root", _standalone_curl)
+            standalone_result = standalone.probe_reachability(
+                "https://relay.example/v1", timeout_s=1
+            )
+        else:
+            def _modular_httpx(url, timeout):
+                if isinstance(modular_first, Exception):
+                    raise modular_first
+                return modular_first
+
+            monkeypatch.setattr(modular_p1, "_httpx_get_root", _modular_httpx)
+            modular_result = modular_p1.probe_reachability(
+                "https://relay.example/v1", timeout_s=1
+            )
+
+            def _standalone_curl(url, timeout, insecure):
+                if isinstance(standalone_first, Exception):
+                    raise standalone_first
+                return standalone_first
+
+            monkeypatch.setattr(standalone, "_probe_curl_get_root", _standalone_curl)
+            standalone_result = standalone.probe_reachability(
+                "https://relay.example/v1", timeout_s=1
+            )
+
+        assert _summary(modular_result) == _summary(standalone_result), (
+            f"Branch parity drift on {name!r}: "
+            f"modular={_summary(modular_result)} "
+            f"standalone={_summary(standalone_result)}"
+        )
+
+    # 1) DNS failure
+    def _dns_fail(host):
+        raise _socket.gaierror(-2, "no such host")
+
+    _run_branch("dns_fail", _dns_fail, None, None, None)
+
+    # 2) TCP refused (no SSL hint in message)
+    _run_branch(
+        "tcp_refused",
+        lambda h: True,
+        _httpx.ConnectError("Connection refused"),
+        RuntimeError("curl failed (rc=7): Connection refused"),
+        None,
+    )
+
+    # 3) TLS handshake — both transports fail on retry too
+    _run_branch(
+        "tls_failed",
+        lambda h: True,
+        _httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]"),
+        RuntimeError("curl failed (rc=60): SSL certificate problem"),
+        None,
+    )
+
+    # 4) HTTP 200
+    _run_branch("http_200", lambda h: True, _FakeResp(200), _FakeResp(200), 200)
+
+    # 5) HTTP 401 (4xx)
+    _run_branch("http_401", lambda h: True, _FakeResp(401), _FakeResp(401), 401)
+
+    # 6) HTTP 502 (5xx)
+    _run_branch("http_502", lambda h: True, _FakeResp(502), _FakeResp(502), 502)
+
+    # 7) curl-fallback recovery: httpx SSL fails, curl -sk returns 200
+    _run_branch(
+        "curl_fallback_recovery",
+        lambda h: True,
+        _httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]"),
+        RuntimeError("curl failed (rc=60): SSL certificate problem"),
+        200,
+    )
+
+
 def test_standalone_stream_model_helper_parity():
     """Regression: missing message_start.model must no longer pass as
     Claude-like on either distribution."""
