@@ -9,6 +9,12 @@ from api_relay_audit.perf.metrics import summarize_latencies
 from api_relay_audit.perf.purity import analyze_purity
 from api_relay_audit.perf.runner import run_benchmark, load_config
 from api_relay_audit.perf.report import write_json_report, write_html_report
+from api_relay_audit.perf.detectors import (
+    PseudoStreamVerdict,
+    SlowStartVerdict,
+    pseudo_stream_detect,
+    slow_start_detect,
+)
 
 __all__ = [
     "StreamingClient",
@@ -19,4 +25,8 @@ __all__ = [
     "load_config",
     "write_json_report",
     "write_html_report",
+    "PseudoStreamVerdict",
+    "SlowStartVerdict",
+    "pseudo_stream_detect",
+    "slow_start_detect",
 ]
