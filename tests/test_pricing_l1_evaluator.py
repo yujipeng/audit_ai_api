@@ -114,8 +114,20 @@ class TestL1GPTPrecisionGate:
     honest reporting (relay reports the tiktoken count exactly)."""
 
     def test_p95_under_5_pct_on_30_gpt_samples(self):
+        from api_relay_audit.pricing.evaluators.l1_tokenizer import (
+            MODEL_ENCODING_OVERRIDES,
+        )
+
         ev = L1TokenizerEvaluator()
-        enc = tiktoken.get_encoding("cl100k_base")
+        model = "gpt-4o-mini"
+        # Honest reporting must match whatever encoding the evaluator picks
+        # for this model; otherwise the test is stochastic on a tiktoken
+        # release.
+        encoding_name = MODEL_ENCODING_OVERRIDES.get(model, "cl100k_base")
+        try:
+            enc = tiktoken.get_encoding(encoding_name)
+        except Exception:
+            enc = tiktoken.get_encoding("cl100k_base")
         corpus = [
             "Hello.", "This is a slightly longer prompt.",
             "Compose a haiku about the wind.",
@@ -152,7 +164,7 @@ class TestL1GPTPrecisionGate:
         for text in corpus:
             n = len(enc.encode(text))
             sample = PricingSample(
-                vendor="openai", model="gpt-4o-mini",
+                vendor="openai", model=model,
                 input_text=text, output_text="",
                 reported_input_tokens=n,
                 reported_output_tokens=0,

@@ -1,0 +1,13 @@
+# tokenizer_fingerprint.yaml — pinned tokenizer baseline (Story TES-135 / S4-B).
+#
+# R5 落地点 2: CI verifies the installed `tiktoken` / `anthropic` versions
+# match these pins on startup. A drift surfaces as a WARN (soft gate, not a
+# hard fail — see api_relay_audit/pricing/tokenizer_fingerprint.py for the
+# rationale). Bump these pins deliberately when re-baselining the L1
+# tokenizer reference.
+#
+# Schema:
+#   <package_name>: "<exact_version_string>"
+
+tiktoken: "0.13.0"
+anthropic: "0.104.1"

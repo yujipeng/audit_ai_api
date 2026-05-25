@@ -27,16 +27,15 @@ import pytest
 
 
 def _make_module(monkeypatch, fingerprint_yaml: str):
-    """Reload the fingerprint module with a synthetic YAML payload."""
-    import importlib
-    import sys
+    """Patch the fingerprint module in-place with a synthetic YAML payload."""
+    import yaml
 
     from api_relay_audit.pricing import tokenizer_fingerprint as tf_mod
-    importlib.reload(tf_mod)
+
     monkeypatch.setattr(
         tf_mod,
         "_load_fingerprint_yaml",
-        lambda: __import__("yaml").safe_load(fingerprint_yaml),
+        lambda: yaml.safe_load(fingerprint_yaml),
     )
     return tf_mod
 

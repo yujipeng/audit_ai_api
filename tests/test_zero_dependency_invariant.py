@@ -63,8 +63,9 @@ class TestDefaultInstallL0Path:
         """The L1 module itself must import lazily — it ships in the default
         distribution and only blows up when its ``evaluate()`` is called
         without the extras."""
-        l1 = importlib.reload(l1_mod)
-        assert hasattr(l1, "L1TokenizerEvaluator")
+        from api_relay_audit.pricing.evaluators import l1_tokenizer
+        assert hasattr(l1_tokenizer, "L1TokenizerEvaluator")
+        assert hasattr(l1_tokenizer, "L1TokenizerMissingError")
 
 
 # ---------------------------------------------------------------------------
