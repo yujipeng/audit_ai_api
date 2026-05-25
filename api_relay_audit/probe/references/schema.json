@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yujipeng/audit_ai_api/probe/schema.json",
+  "title": "ProbeReport",
+  "description": "PRD §3.5 frozen schema for the probe-core ProbeReport. Adding fields is forward-compatible; removing or renaming fields requires a v5 design cycle.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "input_base_url",
+    "input_key_fingerprint",
+    "input_vendor_hint",
+    "verdict",
+    "reachability",
+    "auth_sniff",
+    "models_diff",
+    "rate_limit"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Pinned to 1.0 until a v5 design cycle bumps it."
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "RFC3339 UTC timestamp."
+    },
+    "input_base_url": {"type": "string"},
+    "input_key_fingerprint": {
+      "type": "string",
+      "description": "sha256 prefix of the input key; raw key MUST NOT appear here (PRD §4.2 / §5.1 C2)."
+    },
+    "input_vendor_hint": {
+      "type": "string",
+      "enum": ["auto", "openai", "anthropic", "gemini"]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "warn", "fail"]
+    },
+    "reachability": {"$ref": "#/$defs/ProbeResult"},
+    "auth_sniff": {"$ref": "#/$defs/ProbeResult"},
+    "models_diff": {"$ref": "#/$defs/ProbeResult"},
+    "rate_limit": {"$ref": "#/$defs/ProbeResult"},
+    "infra_hint": {
+      "type": "object",
+      "description": "Derived from infra_fingerprint.classify_framework(); optional.",
+      "required": ["framework", "confidence"],
+      "properties": {
+        "framework": {"type": "string"},
+        "confidence": {
+          "type": "string",
+          "enum": ["confirmed", "tentative", "unknown"]
+        }
+      }
+    },
+    "total_http_calls": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "ProbeResult": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ok", "degraded", "error"],
+          "description": "Per-probe status; independent of aggregated verdict (PRD §4.2)."
+        },
+        "error": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": {"type": "string"},
+                "message": {"type": "string"}
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

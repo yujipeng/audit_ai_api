@@ -2116,6 +2116,150 @@ def run_latency_variance(client, count=DEFAULT_PROBE_COUNT,
 
 
 # ============================================================
+# Section 3a: probe-core types (Story-1, S1 probe-core)
+# ============================================================
+#
+# Mirror of api_relay_audit/probe/types.py. The block bracketed by the
+# ``# === probe types ===`` / ``# === /probe types ===`` markers below
+# is enforced character-strict by
+# tests/test_dual_distribution_parity.py::test_probe_types_section_present_in_standalone
+# and ::test_probe_dataclass_fields_parity. Mirror any field rename or
+# default change into both files.
+
+# === probe types ===
+from dataclasses import dataclass as _probe_dataclass
+from dataclasses import field as _probe_field
+from dataclasses import fields as _probe_fields
+from dataclasses import is_dataclass as _probe_is_dataclass
+from typing import Optional as _ProbeOptional
+
+PROBE_STATUS = ("ok", "degraded", "error")
+PROBE_VERDICT = ("pass", "warn", "fail")
+
+
+@_probe_dataclass
+class ProbeError:
+    code: str
+    message: str
+
+
+@_probe_dataclass
+class ReachabilityResult:
+    status: str
+    tcp_ok: bool = False
+    tls_ok: bool = False
+    tls_chain_summary: _ProbeOptional[str] = None
+    dns_resolves: bool = True
+    http_status_root: _ProbeOptional[int] = None
+    latency_ms: _ProbeOptional[int] = None
+    fallback_to_curl: bool = False
+    signals: list = _probe_field(default_factory=list)
+    error: _ProbeOptional[ProbeError] = None
+
+
+@_probe_dataclass
+class AuthSniffResult:
+    status: str
+    accepted_schemes: list = _probe_field(default_factory=list)
+    envelope_401: str = "unknown"
+    envelope_403: str = "unknown"
+    key_position: str = "unknown"
+    classification: str = "unknown"
+    signals: list = _probe_field(default_factory=list)
+    error: _ProbeOptional[ProbeError] = None
+
+
+@_probe_dataclass
+class ModelsDiffResult:
+    status: str
+    declared: list = _probe_field(default_factory=list)
+    declared_count: int = 0
+    official_reference: list = _probe_field(default_factory=list)
+    catalog_version: _ProbeOptional[str] = None
+    extra_in_relay: list = _probe_field(default_factory=list)
+    missing_in_relay: list = _probe_field(default_factory=list)
+    suspicious_aliases: list = _probe_field(default_factory=list)
+    claimed_model_match: str = "unknown"
+    vendor_breakdown: dict = _probe_field(default_factory=dict)
+    signals: list = _probe_field(default_factory=list)
+    error: _ProbeOptional[ProbeError] = None
+
+
+@_probe_dataclass
+class RateLimitResult:
+    status: str
+    rpm_observed: _ProbeOptional[int] = None
+    headers_seen: list = _probe_field(default_factory=list)
+    envelope_429: str = "absent"
+    retry_after_pattern: str = "unknown"
+    burst_window_s: _ProbeOptional[int] = None
+    triggered_429: bool = False
+    samples_to_429: _ProbeOptional[int] = None
+    compliance: str = "unknown"
+    probe_disabled: bool = False
+    signals: list = _probe_field(default_factory=list)
+    error: _ProbeOptional[ProbeError] = None
+
+
+@_probe_dataclass
+class InfraHint:
+    framework: str
+    confidence: str
+
+
+def _probe_serialize(value):
+    if _probe_is_dataclass(value):
+        return {f.name: _probe_serialize(getattr(value, f.name)) for f in _probe_fields(value)}
+    if isinstance(value, list):
+        return [_probe_serialize(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _probe_serialize(v) for k, v in value.items()}
+    return value
+
+
+@_probe_dataclass
+class ProbeReport:
+    SCHEMA_VERSION = "1.0"
+
+    schema_version: str
+    generated_at: str
+    input_base_url: str
+    input_key_fingerprint: str
+    input_vendor_hint: str
+    verdict: str
+    reachability: ReachabilityResult
+    auth_sniff: AuthSniffResult
+    models_diff: ModelsDiffResult
+    rate_limit: RateLimitResult
+    infra_hint: _ProbeOptional[InfraHint] = None
+    total_http_calls: int = 0
+
+    def has_fatal(self) -> bool:
+        return self.verdict == "fail"
+
+    def to_dict(self) -> dict:
+        payload = {
+            "schema_version": self.schema_version,
+            "generated_at": self.generated_at,
+            "input_base_url": self.input_base_url,
+            "input_key_fingerprint": self.input_key_fingerprint,
+            "input_vendor_hint": self.input_vendor_hint,
+            "verdict": self.verdict,
+            "reachability": _probe_serialize(self.reachability),
+            "auth_sniff": _probe_serialize(self.auth_sniff),
+            "models_diff": _probe_serialize(self.models_diff),
+            "rate_limit": _probe_serialize(self.rate_limit),
+            "total_http_calls": self.total_http_calls,
+        }
+        if self.infra_hint is not None:
+            payload["infra_hint"] = _probe_serialize(self.infra_hint)
+        return payload
+
+
+# === /probe types ===
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 
