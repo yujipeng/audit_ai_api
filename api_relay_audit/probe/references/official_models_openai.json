@@ -1,0 +1,42 @@
+{
+  "catalog_version": "2026-05-25",
+  "vendor": "openai",
+  "catalog_source": "human-curated by PM (资深产品经理) on 2026-05-25 from OpenAI docs + api_relay_audit/perf/runner.py:VENDOR_MODELS['gpt']",
+  "last_verified_at": "2026-05-25",
+  "review_boundary": "PM curates; dev MUST cross-check against live vendor docs before merging Story-4",
+  "top_priority": [
+    "gpt-5.5",
+    "gpt-5.2",
+    "o1",
+    "o3"
+  ],
+  "models": [
+    "gpt-5.5",
+    "gpt-5.5-codex",
+    "gpt-5.3-codex",
+    "gpt-5.2",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4o-2024-05-13",
+    "gpt-4o-2024-08-06",
+    "gpt-4o-2024-11-20",
+    "gpt-4-turbo",
+    "gpt-4-turbo-2024-04-09",
+    "gpt-4-0125-preview",
+    "gpt-4-1106-preview",
+    "gpt-4",
+    "gpt-3.5-turbo",
+    "gpt-3.5-turbo-0125",
+    "o1",
+    "o1-mini",
+    "o1-preview",
+    "o3",
+    "o3-mini",
+    "o4-mini",
+    "text-embedding-3-large",
+    "text-embedding-3-small",
+    "whisper-1"
+  ]
+}

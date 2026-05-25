@@ -2653,6 +2653,292 @@ def probe_auth_sniff(client):
 
 
 # ============================================================
+# Section 3d: probe-core / P3 models-diff (Story-4, S1 probe-core)
+# ============================================================
+#
+# Mirror of api_relay_audit/probe/models_diff.py. The block bracketed by
+# the ``# === models_diff helpers ===`` / ``# === /models_diff helpers ===``
+# markers below is enforced character-strict by
+# tests/test_dual_distribution_parity.py::test_models_diff_section_present_in_standalone
+# (Story-4 dual-dist invariant). The three official-models dict
+# constants below are the standalone equivalent of the JSON files under
+# api_relay_audit/probe/references/official_models_*.json — same
+# catalog_version, same models[], same top_priority[]. Bumping the
+# fixtures requires bumping these dicts in lockstep.
+
+# === models_diff helpers ===
+import re as _md_re
+
+_OFFICIAL_MODELS_OPENAI = {
+    "catalog_version": "2026-05-25",
+    "vendor": "openai",
+    "top_priority": ["gpt-5.5", "gpt-5.2", "o1", "o3"],
+    "models": [
+        "gpt-5.5",
+        "gpt-5.5-codex",
+        "gpt-5.3-codex",
+        "gpt-5.2",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20",
+        "gpt-4-turbo",
+        "gpt-4-turbo-2024-04-09",
+        "gpt-4-0125-preview",
+        "gpt-4-1106-preview",
+        "gpt-4",
+        "gpt-3.5-turbo",
+        "gpt-3.5-turbo-0125",
+        "o1",
+        "o1-mini",
+        "o1-preview",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "text-embedding-3-large",
+        "text-embedding-3-small",
+        "whisper-1",
+    ],
+}
+
+_OFFICIAL_MODELS_ANTHROPIC = {
+    "catalog_version": "2026-05-25",
+    "vendor": "anthropic",
+    "top_priority": ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    "models": [
+        "claude-opus-4-7",
+        "claude-opus-4-7-20260301",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6-20260101",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251022",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-sonnet-20240620",
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-sonnet",
+        "claude-3-5-haiku",
+        "claude-3-opus-20240229",
+        "claude-3-opus",
+        "claude-3-sonnet-20240229",
+        "claude-3-sonnet",
+        "claude-3-haiku-20240307",
+        "claude-3-haiku",
+        "claude-2.1",
+        "claude-2.0",
+        "claude-instant-1.2",
+        "claude-instant-1.1",
+        "claude-instant-1",
+        "claude-3-7-sonnet",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-7-sonnet-latest",
+    ],
+}
+
+_OFFICIAL_MODELS_GEMINI = {
+    "catalog_version": "2026-05-25",
+    "vendor": "gemini",
+    "top_priority": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "models": [
+        "gemini-2.5-pro",
+        "gemini-2.5-pro-experimental",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-thinking",
+        "gemini-2.5-flash-8b",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-exp",
+        "gemini-2.0-flash-thinking-exp",
+        "gemini-2.0-pro",
+        "gemini-1.5-pro",
+        "gemini-1.5-pro-001",
+        "gemini-1.5-pro-002",
+        "gemini-1.5-pro-exp-0827",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-001",
+        "gemini-1.5-flash-8b",
+        "gemini-1.0-pro",
+        "gemini-1.0-pro-001",
+        "gemini-1.0-pro-002",
+        "gemini-1.0-pro-latest",
+        "gemini-1.0-pro-vision-001",
+        "gemini-pro",
+        "gemini-pro-vision",
+        "gemini-experimental",
+        "text-embedding-004",
+        "embedding-001",
+        "aqa",
+    ],
+}
+
+_OFFICIAL_MODELS_BY_VENDOR = {
+    "openai": _OFFICIAL_MODELS_OPENAI,
+    "anthropic": _OFFICIAL_MODELS_ANTHROPIC,
+    "gemini": _OFFICIAL_MODELS_GEMINI,
+}
+
+_SUSPICIOUS_ALIAS_REGEXES = (
+    _md_re.compile(r"^gpt-\d+(\.\d+)?-(pro|ultra|plus)$"),
+    _md_re.compile(r"^gpt-\d+(\.\d+)?-(ultra|max)$"),
+    _md_re.compile(r"-(turbo-max|max-turbo|turbo-plus|plus-turbo|pro-max|max-pro)$"),
+    _md_re.compile(r"^claude-\d+(-\d+)?-(mini|nano|micro|flash|turbo)$"),
+    _md_re.compile(r"^claude-(opus|sonnet|haiku)-([5-9]|\d{2,})$"),
+    _md_re.compile(r"^gemini-([3-9]|\d{2,})\.\d+"),
+    _md_re.compile(r"^gemini-(pro-max|pro-plus|flash-max|flash-pro)$"),
+    _md_re.compile(r"^gpt-4-turbo-\d{4}$"),
+)
+
+
+def is_suspicious_alias(model_id):
+    if not isinstance(model_id, str) or not model_id:
+        return False
+    for regex in _SUSPICIOUS_ALIAS_REGEXES:
+        if regex.search(model_id):
+            return True
+    return False
+
+
+def _classify_vendor(model_id):
+    if not isinstance(model_id, str):
+        return None
+    if model_id.startswith(("gpt-", "o1", "o3", "o4", "text-embedding-", "whisper-")):
+        return "openai"
+    if model_id.startswith("claude-"):
+        return "anthropic"
+    if model_id.startswith(("gemini-", "embedding-", "aqa", "text-embedding-004")):
+        return "gemini"
+    return None
+
+
+def _resolve_models_catalog(vendor_hint, models_ref_url):
+    if models_ref_url:
+        # standalone audit.py only supports local paths for the override
+        # (URL fetching matches the modular distribution but the
+        # standalone run path is curl-only; users wanting a remote
+        # catalog should curl it down first).
+        with open(models_ref_url, "r", encoding="utf-8") as fh:
+            return json.load(fh), None
+    if vendor_hint in _OFFICIAL_MODELS_BY_VENDOR:
+        return _OFFICIAL_MODELS_BY_VENDOR[vendor_hint], vendor_hint
+    merged_models = []
+    merged_top = []
+    for v in ("openai", "anthropic", "gemini"):
+        sub = _OFFICIAL_MODELS_BY_VENDOR[v]
+        merged_models.extend(sub["models"])
+        merged_top.extend(sub["top_priority"])
+    return (
+        {
+            "catalog_version": _OFFICIAL_MODELS_OPENAI["catalog_version"],
+            "vendor": "auto",
+            "models": merged_models,
+            "top_priority": merged_top,
+        },
+        "auto",
+    )
+
+
+def fetch_models_diff(client, vendor_hint="auto", models_ref_url=None):
+    """Standalone mirror of
+    ``api_relay_audit.probe.models_diff.fetch_models_diff``. Same diff
+    semantics; the only divergence is the override path (file-only here
+    vs. file-or-URL in the modular distribution)."""
+    try:
+        catalog, _primary = _resolve_models_catalog(vendor_hint, models_ref_url)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        return ModelsDiffResult(
+            status="error",
+            error=ProbeError(
+                code="catalog_load_failed",
+                message="reference catalog unavailable: " + exc.__class__.__name__,
+            ),
+        )
+
+    raw = client.get_models()
+    if not isinstance(raw, list):
+        return ModelsDiffResult(
+            status="error",
+            declared=[],
+            declared_count=0,
+            official_reference=list(catalog.get("models", [])),
+            catalog_version=catalog.get("catalog_version"),
+            error=ProbeError(
+                code="models_list_unavailable",
+                message="client.get_models() returned non-list payload",
+            ),
+        )
+
+    declared = [e["id"] for e in raw if isinstance(e, dict) and isinstance(e.get("id"), str)]
+    if not declared:
+        return ModelsDiffResult(
+            status="error",
+            declared=[],
+            declared_count=0,
+            official_reference=list(catalog.get("models", [])),
+            catalog_version=catalog.get("catalog_version"),
+            error=ProbeError(
+                code="models_list_unavailable",
+                message="client.get_models() returned no usable entries",
+            ),
+        )
+
+    official = list(catalog.get("models", []))
+    top_priority = list(catalog.get("top_priority", []))
+    official_set = set(official)
+    declared_set = set(declared)
+
+    extras = [m for m in declared if m not in official_set]
+    missing = [m for m in top_priority if m not in declared_set]
+    suspicious = [m for m in extras if is_suspicious_alias(m)]
+
+    breakdown = {}
+    for m in declared:
+        v = _classify_vendor(m)
+        if v is not None:
+            breakdown[v] = breakdown.get(v, 0) + 1
+
+    signals = []
+    if extras:
+        signals.append("extra_in_relay=" + str(len(extras)))
+    if missing:
+        signals.append("missing_in_relay=" + str(len(missing)))
+    if suspicious:
+        signals.append(
+            "suspicious_aliases=" + str(len(suspicious))
+            + " (" + ",".join(suspicious[:3])
+            + ("..." if len(suspicious) > 3 else "") + ")"
+        )
+    if not signals:
+        signals.append("declared=" + str(len(declared)) + " clean")
+
+    if suspicious:
+        verdict = "fail"
+    elif extras or missing:
+        verdict = "warn"
+    else:
+        verdict = "pass"
+
+    return ModelsDiffResult(
+        status="ok",
+        declared=declared,
+        declared_count=len(declared),
+        official_reference=official,
+        catalog_version=catalog.get("catalog_version"),
+        extra_in_relay=extras,
+        missing_in_relay=missing,
+        suspicious_aliases=suspicious,
+        claimed_model_match=verdict,
+        vendor_breakdown=breakdown,
+        signals=signals,
+    )
+
+
+# === /models_diff helpers ===
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 
