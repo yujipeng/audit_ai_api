@@ -94,6 +94,12 @@ def parse_args() -> argparse.Namespace:
                              "Overrides --vendor / DEFAULT_MODELS.")
     g_test.add_argument("--system", default=None,
                         help="Optional system prompt")
+    g_test.add_argument("--capture-chunk-timings", action="store_true",
+                        default=False,
+                        help="Capture per-chunk SSE arrival timestamps and "
+                             "inter-chunk gaps on every round (off by default; "
+                             "raw arrays appear under rounds[].chunk_intervals "
+                             "/ chunk_timestamps in the JSON report).")
 
     g_out = p.add_argument_group("output")
     g_out.add_argument("--output", default="perf-report.html",
@@ -160,6 +166,8 @@ def main() -> int:
             cfg["test"]["concurrency"] = args.concurrency
         if args.max_tokens != DEFAULT_MAX_TOKENS:
             cfg["test"]["max_tokens"] = args.max_tokens
+        if args.capture_chunk_timings:
+            cfg["test"]["capture_chunk_timings"] = True
     else:
         # Resolve the effective model list:
         #   --model overrides everything; otherwise --vendor preset; else default mix.
@@ -188,6 +196,7 @@ def main() -> int:
                 "format": args.format,
                 "system": args.system,
                 "prompts": None,
+                "capture_chunk_timings": args.capture_chunk_timings,
             },
             "default_models": default_models,
             "endpoints": [{

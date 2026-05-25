@@ -16,6 +16,12 @@ from typing import Iterator, Optional
 import httpx
 
 
+# Hard cap on per-call chunk timing samples. Detectors only need a few
+# hundred to judge slow-start / pseudo-stream patterns; this prevents a
+# pathological 6h stream from pinning ~MB of timestamps in memory.
+MAX_CHUNK_RECORDS = 10000
+
+
 @dataclass
 class StreamResult:
     """Outcome of one streaming chat call.
@@ -35,6 +41,18 @@ class StreamResult:
         error: Short human-readable error string. ``None`` on success.
         format: ``"openai"`` or ``"anthropic"`` — the wire format used.
         model: Model id sent in the request body.
+        chunk_intervals: Per-call gaps (seconds) between successive parsed
+            SSE chunks, only populated when the caller passes
+            ``capture_chunk_timings=True`` to :meth:`StreamingClient.stream`.
+            ``None`` when the flag is off; ``[]`` when 0 or 1 chunk was
+            observed.
+        chunk_timestamps: Wall-clock-relative arrival time (seconds since
+            request start) of each parsed SSE chunk, captured under the
+            same flag as ``chunk_intervals``. ``None`` when the flag is off.
+        chunk_intervals_truncated: ``True`` when the captured arrays were
+            bounded by ``MAX_CHUNK_RECORDS`` and the tail of the stream
+            was not recorded. ``chunk_count`` keeps the true total even
+            when this flag is set.
     """
 
     ok: bool
@@ -49,6 +67,9 @@ class StreamResult:
     model: str
     raw_first_chunk: Optional[str] = None
     response_headers: dict = field(default_factory=dict)
+    chunk_intervals: Optional[list[float]] = None
+    chunk_timestamps: Optional[list[float]] = None
+    chunk_intervals_truncated: bool = False
 
 
 class StreamingClient:
@@ -85,7 +106,8 @@ class StreamingClient:
     def stream(self, model: str, prompt: str, *,
                system: Optional[str] = None,
                max_tokens: int = 512,
-               temperature: Optional[float] = None) -> StreamResult:
+               temperature: Optional[float] = None,
+               capture_chunk_timings: bool = False) -> StreamResult:
         """Send a streaming request and collect the result.
 
         Always returns a ``StreamResult`` — never raises on transport
@@ -95,17 +117,26 @@ class StreamingClient:
         body entirely. Some newer models (e.g. ``claude-opus-4-7``) reject
         any ``temperature`` value with HTTP 400, so omitting it is the
         most-compatible default.
+
+        Pass ``capture_chunk_timings=True`` to additionally record per-chunk
+        arrival timestamps and inter-chunk gaps on the returned
+        :class:`StreamResult`. Capture is bounded by
+        :data:`MAX_CHUNK_RECORDS`; once the cap is hit the remaining
+        timing samples are discarded and ``chunk_intervals_truncated`` is
+        set. ``chunk_count`` keeps the true total either way.
         """
         if self.format == "anthropic":
             return self._stream_anthropic(model, prompt, system,
-                                          max_tokens, temperature)
+                                          max_tokens, temperature,
+                                          capture_chunk_timings)
         return self._stream_openai(model, prompt, system,
-                                   max_tokens, temperature)
+                                   max_tokens, temperature,
+                                   capture_chunk_timings)
 
     # -- OpenAI flavour ------------------------------------------------------
 
     def _stream_openai(self, model, prompt, system, max_tokens,
-                       temperature) -> StreamResult:
+                       temperature, capture_chunk_timings=False) -> StreamResult:
         url = self._openai_url()
         messages = []
         if system:
@@ -131,6 +162,9 @@ class StreamingClient:
         chunk_count = 0
         finish_reason: Optional[str] = None
         first_chunk_raw = None
+        chunk_timestamps: Optional[list[float]] = (
+            [] if capture_chunk_timings else None)
+        chunk_intervals_truncated = False
         try:
             with httpx.stream("POST", url, headers=headers, json=body,
                               timeout=self.timeout) as r:
@@ -162,6 +196,12 @@ class StreamingClient:
                     except json.JSONDecodeError:
                         continue
                     chunk_count += 1
+                    if capture_chunk_timings:
+                        if len(chunk_timestamps) < MAX_CHUNK_RECORDS:
+                            chunk_timestamps.append(
+                                time.perf_counter() - start)
+                        else:
+                            chunk_intervals_truncated = True
                     if first_chunk_raw is None:
                         first_chunk_raw = data[:500]
                     delta_text = _openai_delta_text(evt)
@@ -173,6 +213,8 @@ class StreamingClient:
                     if fr:
                         finish_reason = fr
             total = time.perf_counter() - start
+            chunk_intervals = (_intervals(chunk_timestamps)
+                               if capture_chunk_timings else None)
             return StreamResult(
                 ok=True, ttft=ttft, total_time=total,
                 text="".join(text_parts), chunk_count=chunk_count,
@@ -180,6 +222,9 @@ class StreamingClient:
                 format="openai", model=model,
                 raw_first_chunk=first_chunk_raw,
                 response_headers=resp_headers,
+                chunk_intervals=chunk_intervals,
+                chunk_timestamps=chunk_timestamps,
+                chunk_intervals_truncated=chunk_intervals_truncated,
             )
         except httpx.TimeoutException as e:
             return StreamResult(
@@ -207,7 +252,7 @@ class StreamingClient:
     # -- Anthropic flavour ---------------------------------------------------
 
     def _stream_anthropic(self, model, prompt, system, max_tokens,
-                          temperature) -> StreamResult:
+                          temperature, capture_chunk_timings=False) -> StreamResult:
         url = self._anthropic_url()
         body = {
             "model": model,
@@ -232,6 +277,9 @@ class StreamingClient:
         chunk_count = 0
         finish_reason: Optional[str] = None
         first_chunk_raw = None
+        chunk_timestamps: Optional[list[float]] = (
+            [] if capture_chunk_timings else None)
+        chunk_intervals_truncated = False
         try:
             with httpx.stream("POST", url, headers=headers, json=body,
                               timeout=self.timeout) as r:
@@ -263,6 +311,12 @@ class StreamingClient:
                     except json.JSONDecodeError:
                         continue
                     chunk_count += 1
+                    if capture_chunk_timings:
+                        if len(chunk_timestamps) < MAX_CHUNK_RECORDS:
+                            chunk_timestamps.append(
+                                time.perf_counter() - start)
+                        else:
+                            chunk_intervals_truncated = True
                     if first_chunk_raw is None:
                         first_chunk_raw = data[:500]
                     if (evt.get("type") == "content_block_delta"
@@ -277,6 +331,8 @@ class StreamingClient:
                         if sr:
                             finish_reason = sr
             total = time.perf_counter() - start
+            chunk_intervals = (_intervals(chunk_timestamps)
+                               if capture_chunk_timings else None)
             return StreamResult(
                 ok=True, ttft=ttft, total_time=total,
                 text="".join(text_parts), chunk_count=chunk_count,
@@ -284,6 +340,9 @@ class StreamingClient:
                 format="anthropic", model=model,
                 raw_first_chunk=first_chunk_raw,
                 response_headers=resp_headers,
+                chunk_intervals=chunk_intervals,
+                chunk_timestamps=chunk_timestamps,
+                chunk_intervals_truncated=chunk_intervals_truncated,
             )
         except httpx.TimeoutException as e:
             return StreamResult(
@@ -303,6 +362,12 @@ class StreamingClient:
 
 
 # -- SSE helpers -------------------------------------------------------------
+
+def _intervals(timestamps: list[float]) -> list[float]:
+    """Gaps between successive timestamps; ``[]`` when fewer than 2 entries."""
+    return [timestamps[i] - timestamps[i - 1]
+            for i in range(1, len(timestamps))]
+
 
 def _openai_delta_text(evt: dict) -> str:
     """Extract text content from one OpenAI streaming chunk."""

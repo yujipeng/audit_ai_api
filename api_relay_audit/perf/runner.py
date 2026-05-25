@@ -103,6 +103,8 @@ def load_config(path: str) -> dict:
             "format": test.get("format", "openai"),
             "system": test.get("system"),
             "prompts": test.get("prompts"),
+            "capture_chunk_timings": bool(
+                test.get("capture_chunk_timings", False)),
         },
         "default_models": list(raw.get("default_models", [])),
         "endpoints": [],
@@ -141,9 +143,11 @@ def _short_host(url: str) -> str:
 
 def _execute_one(client: StreamingClient, *, model: str, prompt: str,
                  system: Optional[str], max_tokens: int,
-                 temperature: float) -> StreamResult:
+                 temperature: float,
+                 capture_chunk_timings: bool = False) -> StreamResult:
     return client.stream(model=model, prompt=prompt, system=system,
-                         max_tokens=max_tokens, temperature=temperature)
+                         max_tokens=max_tokens, temperature=temperature,
+                         capture_chunk_timings=capture_chunk_timings)
 
 
 def _run_rounds_for_model(*, endpoint: dict, model: str, test: dict,
@@ -156,6 +160,7 @@ def _run_rounds_for_model(*, endpoint: dict, model: str, test: dict,
     max_tokens = test["max_tokens"]
     temperature = test["temperature"]
     system = test.get("system")
+    capture_chunk_timings = bool(test.get("capture_chunk_timings", False))
 
     client = StreamingClient(endpoint["base_url"], endpoint["api_key"],
                              timeout=timeout, format=endpoint["format"])
@@ -167,7 +172,8 @@ def _run_rounds_for_model(*, endpoint: dict, model: str, test: dict,
         log(f"    round {idx + 1}/{rounds} prompt={prompt[:24]!r}")
         results[idx] = _execute_one(
             client, model=model, prompt=prompt, system=system,
-            max_tokens=max_tokens, temperature=temperature)
+            max_tokens=max_tokens, temperature=temperature,
+            capture_chunk_timings=capture_chunk_timings)
 
     if concurrency == 1:
         for i in range(rounds):
@@ -209,6 +215,9 @@ def _run_rounds_for_model(*, endpoint: dict, model: str, test: dict,
             "issues": list(rec.issues),
             "language_mismatch": rec.language_mismatch,
             "identities_detected": list(rec.identities),
+            "chunk_intervals": r.chunk_intervals,
+            "chunk_timestamps": r.chunk_timestamps,
+            "chunk_intervals_truncated": r.chunk_intervals_truncated,
         })
 
     purity = analyze_purity(purity_records)
@@ -288,7 +297,7 @@ def run_benchmark(config: dict, *, model_filter: Optional[list[str]] = None,
 
     elapsed = time.perf_counter() - started
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "tool": "api-relay-audit perf-bench",
         "generated_at": started_iso,
         "elapsed_seconds": elapsed,
