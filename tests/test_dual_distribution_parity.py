@@ -292,3 +292,45 @@ def test_standalone_stream_model_helper_parity():
         assert _check_stream_model(modular_signals) == standalone._check_stream_model(
             standalone_signals
         ), f"Standalone stream-model helper drift for model={model!r}"
+
+
+# ---------------------------------------------------------------------------
+# Pricing parity (TES-135 / S4-B, R5 落地点 3)
+# ---------------------------------------------------------------------------
+
+
+def test_pricing_l1_only_in_modular():
+    """``L1TokenizerEvaluator`` MUST exist in the modular distribution and
+    MUST NOT exist in the standalone distribution. This is the canonical
+    asymmetry: L1 tokenizer code (tiktoken / anthropic SDK) is heavyweight
+    and stays in the modular package only.
+    """
+    from api_relay_audit.pricing.evaluators.l1_tokenizer import (
+        L1TokenizerEvaluator,
+    )
+    assert L1TokenizerEvaluator is not None
+
+    standalone = _load_standalone_audit()
+    assert not hasattr(standalone, "L1TokenizerEvaluator"), (
+        "standalone audit.py exposes L1TokenizerEvaluator — must remain "
+        "modular-only (PRD §6.3 first bullet)."
+    )
+
+
+def test_pricing_l0_constants_no_drift():
+    """If/when standalone embeds an L0 sliver, its drift-band constants
+    MUST match the modular ones byte-for-byte. Until the sliver is
+    embedded, this test is a no-op (nothing to compare)."""
+    from api_relay_audit.pricing.evaluators.l0_character_ratio import (
+        BALANCE_DRIFT_HIGH_PCT as MODULAR_BALANCE,
+        TOKEN_DRIFT_CRITICAL_PCT as MODULAR_CRITICAL,
+        TOKEN_DRIFT_WARN_PCT as MODULAR_WARN,
+    )
+    standalone = _load_standalone_audit()
+
+    if not hasattr(standalone, "TOKEN_DRIFT_WARN_PCT"):
+        return  # Standalone may legitimately omit the L0 sliver entirely.
+
+    assert standalone.TOKEN_DRIFT_WARN_PCT == MODULAR_WARN
+    assert standalone.TOKEN_DRIFT_CRITICAL_PCT == MODULAR_CRITICAL
+    assert standalone.BALANCE_DRIFT_HIGH_PCT == MODULAR_BALANCE

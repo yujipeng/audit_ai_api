@@ -37,3 +37,4 @@ web/data.json
 # The human-readable docs/_metrics.md IS committed; only the machine-
 # readable JSON is ignored to avoid timestamp-diff noise.
 docs/_metrics.json
+.coverage

@@ -747,13 +747,18 @@ future contributors don't re-consider them without new information.
 
 | Item | Why not |
 |---|---|
-| Token accounting audit (exact token counting) | Paper out of scope; no clean offline tokenizer; character-ratio heuristic too noisy; breaks zero-dep invariant if `tiktoken` added. |
 | Knowledge cutoff probe (hvoy.ai dimension 1) | Author of hvoy.ai acknowledges it is trivially defeated by a relay hard-coding "May 2025" in system prompts. 50% of their score is wasted. |
 | hvoy.ai 0-100 numeric scoring | We use 6D boolean risk matrix for clearer downstream decisions. Numeric thresholds need recalibration every model generation. |
 | Copy hvoy.ai's `"null"` text block body fingerprint | Unclear purpose in upstream source; would make our requests indistinguishable from theirs (no benefit). |
 | 4-tier risk scale (adding CRITICAL) | Requires Reporter class refactor; dashboard has downstream consumers; current LOW/MEDIUM/HIGH covers the action space. |
 | Git branch split (main + web3) | `--profile` runtime flag is strictly better: one codebase, one test suite, one distribution, single-source-of-truth memory. Branches would double maintenance cost and break `test_dual_distribution_parity`. |
 | Auto-detection of OpenAI streaming | Step 10 is Anthropic-only by design; OpenAI SSE schema differs. A Chinese relay that only speaks OpenAI format is correctly reported as "inconclusive" on Step 10, not "clean". |
+
+### Partial — was previously NOT-doing, now scoped
+
+| Item | Status | Notes |
+|---|---|---|
+| Token accounting audit | **partial — pricing-compliance slice with bounded-precision L1 + opt-in L2** | Story TES-100 / TES-135 (S4-B) lands a layered pricing-drift evaluator: L0 character-ratio (always-on, zero-dep), L1 tokenizer truth (offline tiktoken for GPT, opt-in `count_tokens` for Claude with `tokenizer_truth_cap`), and L2 = the L1 path against the real-sample corpus from TES-94. Default install stays zero-dep — L1 requires `pip install audit_ai_api[token-meter]`. The standalone `audit.py` deliberately ships L0 only; L1 lives in the modular distribution. CI verifies a tokenizer version fingerprint (warn-only soft gate). |
 
 ---
 
