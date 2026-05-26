@@ -39,6 +39,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--run-id", required=True)
     p.add_argument("--reports-dir", default="reports/pricing",
                    help="Root directory for artifact output.")
+    p.add_argument("--samples-file",
+                   help="Path to a JSON file with a list of PricingSample "
+                        "dicts. When provided, the shell entry point loads "
+                        "samples from this file instead of replaying a live "
+                        "audit run.")
+    p.add_argument("--no-config", action="store_true",
+                   help="Skip audit.yaml validation. Intended for tests and "
+                        "for running against a samples-file dump where the "
+                        "config has already been honoured upstream.")
     p.add_argument("-v", "--verbose", dest="verbosity", action="count",
                    default=0,
                    help="Increase verbosity (-v normal, -vv verbose). "
