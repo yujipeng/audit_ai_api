@@ -27,6 +27,9 @@ token-meter = [
     "anthropic>=0.39.0",
 ]
 
+[project.scripts]
+audit-pricing = "api_relay_audit.pricing.__main__:main"
+
 [tool.setuptools.packages.find]
 include = ["api_relay_audit*"]
 
