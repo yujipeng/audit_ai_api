@@ -253,3 +253,72 @@ class TestWarnMarker:
         rc, out = self._capture(_evaluate_critical, tmp_path)
         assert rc == 1
         assert "WARN" not in out
+
+
+class TestShellEntryPoint:
+    """PRD §6.1.1 + AC#5: ``audit pricing`` must be invokable from shell.
+
+    Reviewer 20:14:32Z flagged that only the pure ``run()`` function was
+    wired up — there was no ``__main__.py`` and no ``[project.scripts]``
+    entry, so the subcommand was not actually reachable from a user
+    shell. The contract here is the bare minimum required to make
+    ``python -m api_relay_audit.pricing ...`` work end-to-end against a
+    samples JSON file. The console-script entry point delegates to the
+    same ``main()`` function and is asserted by import.
+    """
+
+    def _samples_payload(self):
+        return [
+            {
+                "vendor": "anthropic",
+                "model": "claude-opus-4-7",
+                "input_text": "hello world",
+                "output_text": "hi there",
+                "reported_input_tokens": 3,
+                "reported_output_tokens": 3,
+            }
+        ]
+
+    def test_main_module_help_exits_clean(self):
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "-m", "api_relay_audit.pricing", "--help"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0
+        assert "audit pricing" in result.stdout
+
+    def test_main_runs_against_samples_file(self, tmp_path):
+        from api_relay_audit.pricing.__main__ import main
+
+        samples_file = tmp_path / "samples.json"
+        samples_file.write_text(json.dumps(self._samples_payload()))
+        reports_dir = tmp_path / "reports"
+
+        rc = main([
+            "--config", str(tmp_path / "unused.yaml"),
+            "--provider", "anthropic",
+            "--model", "claude-opus-4-7",
+            "--run-id", "shell-test",
+            "--samples-file", str(samples_file),
+            "--reports-dir", str(reports_dir),
+            "--no-config",
+        ])
+        assert rc in (0, 1)
+        artifact = reports_dir / "anthropic" / "shell-test.json"
+        assert artifact.exists()
+
+    def test_console_script_entry_is_importable(self):
+        from api_relay_audit.pricing.__main__ import main
+        assert callable(main)
+
+    def test_pyproject_registers_console_script(self):
+        import tomllib
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parent.parent
+        cfg = tomllib.loads((repo_root / "pyproject.toml").read_text())
+        scripts = cfg.get("project", {}).get("scripts", {})
+        assert "audit-pricing" in scripts
+        assert scripts["audit-pricing"].startswith(
+            "api_relay_audit.pricing.__main__:"
+        )
