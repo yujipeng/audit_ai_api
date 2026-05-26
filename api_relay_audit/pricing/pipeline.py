@@ -39,6 +39,9 @@ _LAYER_CONFIDENCE: dict[str, float] = {
 }
 
 
+PRICING_SCHEMA_VERSION = "1"
+
+
 # Higher rank = stricter. Token-drift-critical outranks balance-drift-high
 # because token drift is a deterministic over-billing signal whereas
 # balance drift can be confounded by FX / cache discounts.
@@ -98,5 +101,6 @@ def aggregate(verdicts: Iterable[PricingVerdict]) -> AggregatedPricingVerdict:
 
 __all__ = [
     "AggregatedPricingVerdict",
+    "PRICING_SCHEMA_VERSION",
     "aggregate",
 ]
