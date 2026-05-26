@@ -107,6 +107,16 @@ def _emit(
 
     severities = [a.severity.value for _, a in pairs]
     worst = max(severities, key=_severity_rank)
+
+    # PRD §6.5: warn-class verdicts exit 0 but MUST emit a WARN marker
+    # line so CI dashboards can grep a clean run apart from a warn-but-
+    # passing run. The marker prints in every verbosity tier (including
+    # quiet) because the marker is the entire point of the WARN tier.
+    if worst in _WARN_SEVERITIES:
+        out.write(
+            f"pricing: WARN — {worst} (exit_code={exit_code})\n"
+        )
+
     out.write(f"pricing: {worst} (exit_code={exit_code})\n")
     if verbosity == 0:
         return
@@ -139,6 +149,10 @@ _SEVERITY_RANK_BY_VALUE = {
     "balance_drift_high": 4,
     "token_drift_critical": 5,
 }
+
+
+# Warn-class severities (PRD §6.5): exit 0 but emit grep-able WARN line.
+_WARN_SEVERITIES = frozenset({"token_drift_warn"})
 
 
 def _severity_rank(value: str) -> int:
