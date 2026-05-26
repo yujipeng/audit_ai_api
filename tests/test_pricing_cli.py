@@ -206,3 +206,50 @@ class TestArgparseIntegration:
             "-v",
         ])
         assert ns.verbosity == 1
+
+
+class TestWarnMarker:
+    """PRD §6.5 第一条: warn → exit 0 but log line MUST contain WARN.
+
+    A warn-level severity (token_drift_warn) is not exit-code-actionable
+    but operators still need a grep-able marker so a CI dashboard can
+    distinguish a clean run from a warn-but-passing run. The contract:
+    every warn-class verdict produces a ``pricing: WARN — <severity>``
+    line in addition to the standard severity line.
+    """
+
+    def _capture(self, evaluate_fn, tmp_path, verbosity=1):
+        from io import StringIO
+        buf = StringIO()
+        rc = pricing_cli.run(
+            samples=[SAMPLE],
+            evaluate_fn=evaluate_fn,
+            run_id="t",
+            provider="anthropic",
+            model="claude-opus-4-7",
+            artifact_dir=tmp_path,
+            verbosity=verbosity,
+            stdout=buf,
+        )
+        return rc, buf.getvalue()
+
+    def test_warn_emits_warn_marker(self, tmp_path):
+        rc, out = self._capture(_evaluate_warn, tmp_path)
+        assert rc == 0
+        assert "WARN" in out
+        assert "token_drift_warn" in out
+
+    def test_warn_marker_present_in_quiet_mode(self, tmp_path):
+        rc, out = self._capture(_evaluate_warn, tmp_path, verbosity=0)
+        assert rc == 0
+        assert "WARN" in out
+
+    def test_compliant_does_not_emit_warn_marker(self, tmp_path):
+        rc, out = self._capture(_evaluate_compliant, tmp_path)
+        assert rc == 0
+        assert "WARN" not in out
+
+    def test_critical_does_not_emit_warn_marker(self, tmp_path):
+        rc, out = self._capture(_evaluate_critical, tmp_path)
+        assert rc == 1
+        assert "WARN" not in out
