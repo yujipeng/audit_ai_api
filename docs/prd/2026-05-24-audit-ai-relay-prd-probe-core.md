@@ -11,7 +11,7 @@ reviewers: 资深产品经理 / 资深架构师 / 项目管理专家
 
 # PRD：S1 探测核心（probe-core）
 
-> 版本：v0.2（2026-05-25 PM 收口：F5 退出码 freeze + F1 占位待项目负责人答复 + F2/F3 fixture 落盘）
+> 版本：v0.3（2026-05-26 PM 收口：F1 P4 baseline 项目负责人裁决落地 — 12 + 4 = 16 次）
 > 基线代码：master@6693aca（演进式增强，非新建）
 > 覆盖切片范围：endpoint 可达性 + auth 形态嗅探 + `/v1/models` 清单 diff + 限速指纹（**明确不含 perf**，归 S3）
 
@@ -21,6 +21,7 @@ reviewers: 资深产品经理 / 资深架构师 / 项目管理专家
 | --- | --- | --- |
 | v0.1 | 2026-05-24 | 初稿 |
 | v0.2 | 2026-05-25 | PJM 解锁 dispatch（TES-93 5/25 13:25 UTC）：（1）§10 退出码语义 freeze（F5）；（2）§7.2 Q2 重写为"待项目负责人答复"占位（F1）；（3）F2+F3 fixture 落盘至 `tests/fixtures/models_diff/`，§4.3 引用更新；本版本仍为 draft，v1.0 升版需等项目负责人对 F1 拍板。 |
+| v0.3 | 2026-05-26 | F1 P4 baseline 闭环：项目负责人 2026-05-26 01:46 UTC 裁决「维持 12 baseline + 4 burst = 16 次（PRD 现状方案 A）」，§3.1 P4 行 / §5.1 C4 / §7.1 R2 / §7.2 Q2 同步固化为「已裁决」；S1 PRD 全部未决 F-项清零（F1–F5 均收口），dev 侧 [TES-153](mention://issue/439998ab-4d9d-42a3-8f44-4156306396a3) F1 软门即刻解除。 |
 
 ---
 
@@ -96,7 +97,7 @@ probe-core 由 4 个相互独立、可并行、失败可降级的原子探针组
 | **P1 reachability**（可达性 + TLS） | base_url | `ReachabilityResult{tcp_ok, tls_ok, tls_chain, dns_resolves, http_status_root, latency_ms}` | 否（全是 GET / HEAD） |
 | **P2 auth-sniff**（鉴权形态嗅探） | base_url + key | `AuthSniffResult{accepted_schemes:[bearer\|api_key\|x-api-key\|...], 401_envelope, 403_envelope, key_position}` | 否（一组刻意失败的最小请求） |
 | **P3 models-list-diff**（模型清单 diff） | base_url + key | `ModelsDiffResult{declared:[...], official_reference:[...], extra_in_relay:[...], missing_in_relay:[...], suspicious_aliases:[...]}` | 否（仅 GET `/v1/models`） |
-| **P4 rate-limit-fingerprint**（限速指纹） | base_url + key | `RateLimitResult{rpm_observed, headers_seen:[...], 429_envelope, retry_after_pattern, burst_window_s}` | **极少**（默认 12 次轻量请求 + 4 次故意触发，可关闭） |
+| **P4 rate-limit-fingerprint**（限速指纹） | base_url + key | `RateLimitResult{rpm_observed, headers_seen:[...], 429_envelope, retry_after_pattern, burst_window_s}` | **极少**（默认 12 baseline + 4 burst = 16 次轻量请求，已经项目负责人 2026-05-26 01:46 UTC 裁决固化，可 `--no-rate-limit-probe` 关闭） |
 
 **聚合器 `ProbeReport`**：把 4 个探针结果合并成一份可序列化对象，附 `verdict ∈ {pass, warn, fail}` 整体结论 + 4 个分项判定。
 
@@ -211,7 +212,7 @@ api_relay_audit/
 - **C1** 默认不发起任何带真实推理 payload 的请求；P1/P2/P3 完全不消耗 token；P4 默认仅做 `max_tokens=1` 的最小请求触发限速头
 - **C2** `key` 仅以 sha256 前缀写入报告，raw key 不进入 stdout / 任何文件；transparent_log 不记录 key
 - **C3** P2 auth-sniff 探针**禁止**把用户 key 发到非 `base_url` 的任何域；只在用户提供的 endpoint 上嗅探
-- **C4** rate-limit 探针**默认上限**：12 baseline + 4 burst 请求；超限直接报错而非继续打；CI 模式可一键关闭
+- **C4** rate-limit 探针**默认上限**：12 baseline + 4 burst 请求（合计 16 次，项目负责人 2026-05-26 01:46 UTC 裁决固化）；超限直接报错而非继续打；CI 模式 `--no-rate-limit-probe` 一键关闭
 
 ### 5.2 非功能约束
 
@@ -267,7 +268,7 @@ api_relay_audit/
 | ID | 风险 | 影响 | 缓解 |
 | --- | --- | --- | --- |
 | R1 | P3 官方清单静态快照很快过期 | 假阳性高（误报"中转站多/少模型"） | 内置版本号，CI 每月跑同步脚本，超过 60 天自动告警；用户可 `--models-ref-url` 覆盖 |
-| R2 | P4 限速探针在严控 endpoint 上反触发封禁 | 临时被中转站拉黑 | 默认 12+4 上限；提供 `--no-rate-limit-probe` 一键关闭；burst 请求间隔最少 250ms |
+| R2 | P4 限速探针在严控 endpoint 上反触发封禁 | 临时被中转站拉黑 | 默认 12 baseline + 4 burst = 16 次上限（项目负责人 2026-05-26 01:46 UTC 裁决固化）；提供 `--no-rate-limit-probe` 一键关闭；burst 请求间隔最少 250ms |
 | R3 | 中转站对探针请求做"识别后回真模型"对抗（CISPA 论文已有） | P3 假阴性 | probe-core **本切片不解决**，在 S2/S3 由 evaluator 通过抽样 + 真源对照基线（见调研报告 5.4 节）兜底 |
 | R4 | base_url 归一化错误（带或不带 `/v1`，trailing slash） | P1/P3 命中错误路径 | 归一化逻辑独立单测覆盖 8 种变体（含 `https://x.com`、`https://x.com/`、`https://x.com/v1`、`https://x.com/v1/`、`http://x.com:8080/api/`...） |
 | R5 | 与现有 `audit.py` 的耦合改动可能破坏既有 CLI 用户 | 回归 | A13 验收：`--skip-probe` 必须 100% 兼容 master；CI 加 `audit.py --skip-probe` 烟测固定输出 |
@@ -276,7 +277,7 @@ api_relay_audit/
 ### 7.2 未决问题（开放给评审）
 
 - **Q1** 官方清单参考源是否需要内置脚本 `scripts/sync_official_models.py` 自动从厂商文档抓取？（M1：MVP 不做，靠人工同步；M2：考虑内置）
-- **Q2** *(F1，2026-05-25 待项目负责人答复)* P4 限速探针默认 baseline：**12 + 4（推荐 / PRD 现状）** vs **仅 12（保守）** vs **默认关闭**。PM 已在父 issue [TES-93](mention://issue/c8ac1338-5392-4959-9f55-d64745167f4c) 评论 [8fb11605](mention://comment/8fb11605) 请示项目负责人，4h 软门后若未答复 PM 默认采用 12+4 并升 v1.0；事后可回滚。**v0.2 锁定结论**：当前 §3.4 / §5.1 C4 / §7.1 R2 一律按 12+4 推进，本 Q2 在项目负责人答复后由 PM 一次性升 v1.0 收口。
+- **Q2** *(F1，2026-05-26 已裁决，关闭)* P4 限速探针默认 baseline：**12 baseline + 4 burst = 16 次轻量请求**（默认开启，可 `--no-rate-limit-probe` 关闭）。项目负责人 [@jipeng.yu](mention://member/bdd4a88e-0e42-4da0-9ce4-70813cc39c19) 于 2026-05-26 01:46 UTC 在父 issue [TES-93](mention://issue/c8ac1338-5392-4959-9f55-d64745167f4c) 评论 [0f3f17f1](mention://comment/0f3f17f1) 裁决：维持 PRD 现状方案 A（PM 推荐），理由是下游成本可控、严控 endpoint 已由 §7.1 R2 burst 间隔 ≥ 250ms + 直接报错短路兜底。PM 13:30 UTC 升级请示至裁决落地 12h16min 闭环，R-S1-PM-CLOSEOUT 风险关闭。**结论已固化进 §3.1 P4 行 / §5.1 C4 / §7.1 R2**，dev 侧 [TES-153](mention://issue/439998ab-4d9d-42a3-8f44-4156306396a3) F1 软门即刻解除。
 - **Q3** ProbeReport 是否单独输出独立 HTML 卡片（`reports/probe-<ts>.html`），还是仅嵌入 audit 主报告？建议 MVP 嵌入 audit 主报告 + JSON 单独可获取，HTML 单独卡片放 S5 编排切片
 - **Q4** `--probe-only` 模式是否走独立 CLI 入口（如 `scripts/probe.py`），还是仅作 `audit.py` 的子模式？建议先走子模式（A2），独立入口由 S5 决定
 
