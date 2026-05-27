@@ -233,6 +233,33 @@ audit_ai_api/
 
 ---
 
+## 纯净度六维评估 (Purity v2.0)
+
+`scripts/purity-eval.py` 是六维独立评估的 CLI 入口（S2 收口；TES-165）。
+它把现有 13-step 端到端审计中的每一类「干净 / 疑似 / 注入」证据收成
+独立的维度报告：`injection / swap / drift / tool / refusal / leak`，加上
+按需开启的 `web3_injection`。
+
+最小命令：
+
+```bash
+python scripts/purity-eval.py https://relay.example sk-yourkey claude \
+    --rounds 2 --output /tmp/p.json --json
+```
+
+报告结构（schema_version 锁为 `"purity-v2.0"`）见
+[`docs/purity-v2-schema.md`](docs/purity-v2-schema.md)。Exit code 三档
+(`clean=0` / `injected|failed=1` / `suspicious|unknown` 默认 0、`--strict`
+后 2)、`--raw-keep` 默认剥离 `raw_artifacts`、HTML 报告每维独立 `<section>`
+六块，全部由 `tests/test_purity_cli.py` + `tests/test_purity_reporter.py`
++ `tests/test_evaluator_pipeline.py` 锁定。
+
+`scripts/audit.py` 13-step 审计与本 CLI **并行存在、互不替换**：13-step
+是面向人读的 Markdown 报告 + 风险矩阵；purity-eval 是机器友好的
+JSON/HTML 形态、用于回归对比与 baseline 比对（baseline 比对在 P1 引入）。
+
+---
+
 ## License
 
 继承自上游 `toby-bridges/api-relay-audit`。
