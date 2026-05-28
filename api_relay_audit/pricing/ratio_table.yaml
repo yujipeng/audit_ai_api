@@ -1,0 +1,62 @@
+# ratio_table.yaml — chars-per-token estimates (Story TES-134 / S4-A).
+#
+# Schema (frozen — see TES-134 §跨 Story 不变量 #3):
+#   <vendor>:
+#     <model>:
+#       zh:      <float>   # chars per token, Chinese-dominant text
+#       en:      <float>   # chars per token, ASCII-dominant text
+#       default: <float>   # fallback used when language detection is uncertain
+#
+# Special vendor key ``_default`` provides a global fallback; per-vendor
+# ``_default`` model key provides a vendor-wide fallback for unknown models.
+#
+# Source: empirical ratios derived from public BPE/tiktoken/cl100k tokenizers
+# 2026-05; see TES-94 调研集 for the calibration corpus.
+
+_default:
+  _default:
+    zh: 1.5
+    en: 4.0
+    default: 3.0
+
+anthropic:
+  _default:
+    zh: 1.6
+    en: 4.0
+    default: 3.0
+  claude-haiku-4-5:
+    zh: 1.6
+    en: 4.0
+    default: 3.0
+  claude-sonnet-4-6:
+    zh: 1.6
+    en: 4.0
+    default: 3.0
+  claude-opus-4-7:
+    zh: 1.6
+    en: 4.0
+    default: 3.0
+
+openai:
+  _default:
+    zh: 1.5
+    en: 4.0
+    default: 3.0
+  gpt-4o-mini:
+    zh: 1.5
+    en: 4.0
+    default: 3.0
+  gpt-4o:
+    zh: 1.5
+    en: 4.0
+    default: 3.0
+
+deepseek:
+  _default:
+    zh: 1.6
+    en: 4.0
+    default: 3.0
+  deepseek-chat:
+    zh: 1.6
+    en: 4.0
+    default: 3.0

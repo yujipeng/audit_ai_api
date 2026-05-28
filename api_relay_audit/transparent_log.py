@@ -83,6 +83,42 @@ class TransparentLogger:
         except Exception as e:
             print(f"  [transparent-log] write error: {e}", file=sys.stderr)
 
+    def log_pricing_entry(self, sample: dict, aggregated) -> None:
+        """Append a pricing-aggregate entry (Story TES-137 / S4-D, PRD §6.5.2).
+
+        Writes a JSONL line with namespaced ``pricing.*`` keys so the
+        operator can grep the forensic log without parsing nested objects.
+        ``balance_drift`` is sourced from any layer that recorded a
+        ``balance_drift_pct`` detail (typically L2); absent when no layer
+        observed balance data — the audit must not synthesise a zero.
+        """
+        balance_drift = None
+        # Walk highest-confidence layer first (L2 → L1 → L0); the
+        # balance signal is owned by L2, so we never let an L0/L1
+        # incidental ``balance_drift_pct`` shadow it.
+        for layer in ("L2_balance_triangle", "L1_tokenizer",
+                      "L0_character_ratio"):
+            details = aggregated.per_layer.get(layer)
+            if details and "balance_drift_pct" in details:
+                balance_drift = details["balance_drift_pct"]
+                break
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": "pricing",
+            "sample": dict(sample) if sample else {},
+            "pricing.severity": aggregated.severity.value,
+            "pricing.layer": aggregated.layer,
+            "pricing.confidence": aggregated.confidence,
+            "pricing.token_drift": aggregated.drift_pct,
+            "pricing.balance_drift": balance_drift,
+            "pricing.suppressed_by": list(aggregated.suppressed_by),
+            "pricing.per_layer": {
+                k: dict(v) for k, v in aggregated.per_layer.items()
+            },
+        }
+        self.log_entry(entry)
+
     def close(self) -> None:
         """Close the underlying file handle (idempotent)."""
         try:

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audit_ai_api"
+version = "1.8.1"
+description = "API-relay audit toolkit (modular distribution + zero-dep standalone)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "httpx>=0.24.0",
+    "PyYAML>=6.0",
+]
+
+# Optional extras. The `token-meter` extras are required only for the L1
+# tokenizer evaluator (Story TES-135 / S4-B):
+#   - `tiktoken` powers the offline GPT path (cl100k_base / o200k_base).
+#   - `anthropic` powers the opt-in Claude `count_tokens` path.
+#
+# Default install (no extras) keeps the zero-dep invariant: pricing audits
+# run with the L0 character-ratio evaluator only. See PRD §6.1.3 / §6.3.2.
+[project.optional-dependencies]
+token-meter = [
+    "tiktoken>=0.7.0",
+    "anthropic>=0.39.0",
+]
+
+[project.scripts]
+audit-pricing = "api_relay_audit.pricing.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["api_relay_audit*"]
+
+[tool.setuptools.package-data]
+api_relay_audit = [
+    "pricing/*.yaml",
+]
