@@ -16,7 +16,9 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from api_relay_audit.perf.metrics import summarize_latencies
+from api_relay_audit.perf.detectors import (pseudo_stream_detect,
+                                             slow_start_detect)
+from api_relay_audit.perf.metrics import percentile, summarize_latencies
 from api_relay_audit.perf.purity import (PurityRecord, analyze_purity,
                                          analyze_response)
 from api_relay_audit.perf.streaming import (StreamingClient, StreamResult,
@@ -105,6 +107,11 @@ def load_config(path: str) -> dict:
             "prompts": test.get("prompts"),
             "capture_chunk_timings": bool(
                 test.get("capture_chunk_timings", False)),
+            "detect_pseudo_stream": bool(
+                test.get("detect_pseudo_stream", False)),
+            "detect_slow_start": bool(
+                test.get("detect_slow_start", False)),
+            "warmup_rounds": int(test.get("warmup_rounds", 0)),
         },
         "default_models": list(raw.get("default_models", [])),
         "endpoints": [],
@@ -161,6 +168,9 @@ def _run_rounds_for_model(*, endpoint: dict, model: str, test: dict,
     temperature = test["temperature"]
     system = test.get("system")
     capture_chunk_timings = bool(test.get("capture_chunk_timings", False))
+    detect_pseudo = bool(test.get("detect_pseudo_stream", False))
+    detect_slow = bool(test.get("detect_slow_start", False))
+    warmup_rounds = max(0, int(test.get("warmup_rounds", 0)))
 
     client = StreamingClient(endpoint["base_url"], endpoint["api_key"],
                              timeout=timeout, format=endpoint["format"])
@@ -222,21 +232,112 @@ def _run_rounds_for_model(*, endpoint: dict, model: str, test: dict,
 
     purity = analyze_purity(purity_records)
 
+    metrics = {
+        "ttft_seconds": summarize_latencies(ttft_values),
+        "total_seconds": summarize_latencies(total_values),
+        "output_chars": summarize_latencies(output_chars),
+        "success_rate": (sum(1 for r in rows if r["ok"]) / len(rows)
+                         if rows else 0.0),
+        "successful_rounds": sum(1 for r in rows if r["ok"]),
+        "failed_rounds": sum(1 for r in rows if not r["ok"]),
+    }
+    metrics.update(_chunk_derived_metrics(rows, capture_chunk_timings))
+    metrics["warmup_rounds_count"] = warmup_rounds
+    metrics["steady_state_metrics"] = _steady_state_metrics(rows, warmup_rounds)
+
+    detectors = {
+        "pseudo_stream": _maybe_pseudo_stream(rows, detect_pseudo),
+        "slow_start": _maybe_slow_start(rows, detect_slow),
+    }
+
     return {
         "model": model,
         "rounds": rows,
         "errors": [r["error"] for r in rows if not r["ok"]],
-        "metrics": {
-            "ttft_seconds": summarize_latencies(ttft_values),
-            "total_seconds": summarize_latencies(total_values),
-            "output_chars": summarize_latencies(output_chars),
-            "success_rate": (sum(1 for r in rows if r["ok"]) / len(rows)
-                             if rows else 0.0),
-            "successful_rounds": sum(1 for r in rows if r["ok"]),
-            "failed_rounds": sum(1 for r in rows if not r["ok"]),
-        },
+        "metrics": metrics,
         "purity": purity.as_dict(),
+        "detectors": detectors,
     }
+
+
+def _chunk_derived_metrics(rows: list[dict], capture_on: bool) -> dict:
+    """Compute v2 chunk-derived metrics. Returns null fields when capture off.
+
+    design §4.6 / §5.2:
+    - itl_seconds: summarize over flattened chunk_intervals across ok rows.
+    - throughput_chars_s: per ok row, output_chars / total_seconds.
+    - first_chunk_ratio: per ok row, intervals[0] / median(intervals[1:]).
+    """
+    if not capture_on:
+        return {"itl_seconds": None,
+                "throughput_chars_s": None,
+                "first_chunk_ratio": None}
+
+    flat_intervals: list[float] = []
+    throughput: list[float] = []
+    first_ratios: list[float] = []
+    for row in rows:
+        if not row.get("ok"):
+            continue
+        intervals = row.get("chunk_intervals") or []
+        if intervals:
+            flat_intervals.extend(intervals)
+        total = row.get("total_seconds") or 0
+        chars = row.get("output_chars") or 0
+        if total > 0 and chars > 0:
+            throughput.append(chars / total)
+        if len(intervals) >= 2:
+            tail_median = percentile(intervals[1:], 50)
+            if tail_median is not None and tail_median > 0:
+                first_ratios.append(intervals[0] / tail_median)
+
+    return {
+        "itl_seconds":
+            summarize_latencies(flat_intervals) if flat_intervals else None,
+        "throughput_chars_s":
+            summarize_latencies(throughput) if throughput else None,
+        "first_chunk_ratio":
+            summarize_latencies(first_ratios) if first_ratios else None,
+    }
+
+
+def _steady_state_metrics(rows: list[dict], warmup: int) -> Optional[dict]:
+    """Re-summarize ttft / total / output_chars over rounds[warmup:].
+
+    Returns ``None`` when warmup is 0, or when no rounds remain after dropping
+    the warmup window. design §5.2 (steady_state_metrics 填充).
+    """
+    if warmup <= 0:
+        return None
+    steady = rows[warmup:]
+    if not steady:
+        return None
+    ttfts = [r["ttft_seconds"] for r in steady
+             if r.get("ok") and r.get("ttft_seconds") is not None]
+    totals = [r["total_seconds"] for r in steady
+              if r.get("ok") and r.get("total_seconds") is not None]
+    chars = [r["output_chars"] for r in steady
+             if r.get("ok") and r.get("output_chars") is not None]
+    return {
+        "ttft_seconds": summarize_latencies(ttfts),
+        "total_seconds": summarize_latencies(totals),
+        "output_chars": summarize_latencies(chars),
+        "rounds_used": len(steady),
+    }
+
+
+def _maybe_pseudo_stream(rows: list[dict], enabled: bool) -> Optional[dict]:
+    if not enabled:
+        return None
+    verdict = pseudo_stream_detect(rows)
+    return {"verdict": verdict.verdict, "evidence": dict(verdict.evidence)}
+
+
+def _maybe_slow_start(rows: list[dict], enabled: bool) -> Optional[dict]:
+    if not enabled:
+        return None
+    verdict = slow_start_detect(rows)
+    return {"verdict": verdict.verdict, "evidence": dict(verdict.evidence)}
 
 
 # -- Public driver -----------------------------------------------------------
